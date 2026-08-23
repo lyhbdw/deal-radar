@@ -1,0 +1,16 @@
+[Unit]
+Description=NodeSeek Interactive Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/nodeseek-radar/nodeseek_bot.py
+WorkingDirectory=/opt/nodeseek-radar
+Restart=always
+RestartSec=10
+TimeoutStopSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

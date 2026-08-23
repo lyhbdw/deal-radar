@@ -1,0 +1,20 @@
+# Secrets and local runtime state
+.nodeseek_env
+*.env
+!.env.example
+nodeseek_monitor.db
+nodeseek_monitor.db-*
+nodeseek_offset.txt
+nodeseek_paused
+nodeseek_categories.json
+
+# Runtime output and backups
+*.log
+backups/
+__pycache__/
+*.py[cod]
+
+# Editor / OS files
+.DS_Store
+.vscode/
+.idea/

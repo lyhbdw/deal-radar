@@ -1,0 +1,16 @@
+[Unit]
+Description=NodeSeek RSS Keyword Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/nodeseek-radar/nodeseek_monitor.py
+WorkingDirectory=/opt/nodeseek-radar
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
