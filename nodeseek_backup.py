@@ -12,6 +12,9 @@ BACKUPS.mkdir(parents=True, exist_ok=True)
 name = datetime.now(timezone.utc).strftime('nodeseek-%Y%m%d-%H%M%SZ.db')
 target = BACKUPS / name
 src = sqlite3.connect(SOURCE)
+# Checkpoint WAL into main DB so the backup contains all committed data
+# and the WAL file gets truncated.
+src.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 dst = sqlite3.connect(target)
 try:
     src.backup(dst)

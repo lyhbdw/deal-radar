@@ -13,11 +13,13 @@ import subprocess
 import urllib.request
 import socket
 import http.client
+import signal
 from contextlib import contextmanager
 from html import escape as html_escape
 from datetime import datetime, timezone
 from nodeseek_core import (
-    ensure_keywords_schema, get_category_config, set_category_enabled as set_category_config_enabled,
+    ensure_keywords_schema, ensure_state_table, get_category_config,
+    set_category_enabled as set_category_config_enabled,
     state_get, validate_keywords,
 )
 
@@ -177,7 +179,11 @@ def is_monitor_running():
 
 # ============ 数据库 ============
 
-def get_db():
+_schema_initialized = False
+
+def init_db():
+    """Run schema creation once at startup; subsequent get_db() calls skip DDL."""
+    global _schema_initialized
     db = sqlite3.connect(DB_PATH, timeout=10)
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("""CREATE TABLE IF NOT EXISTS seen_posts (
@@ -188,7 +194,28 @@ def get_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         guid TEXT, title TEXT, link TEXT, author TEXT,
         category TEXT, pub_date TEXT, matched_keywords TEXT, pushed_at TEXT)""")
+    ensure_state_table(db)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_first_seen ON seen_posts(first_seen)")
     db.commit()
+    db.close()
+    _schema_initialized = True
+
+
+def get_db():
+    db = sqlite3.connect(DB_PATH, timeout=10)
+    if not _schema_initialized:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("""CREATE TABLE IF NOT EXISTS seen_posts (
+            guid TEXT PRIMARY KEY, title TEXT, link TEXT, author TEXT,
+            category TEXT, pub_date TEXT, matched_keywords TEXT, first_seen TEXT)""")
+        ensure_keywords_schema(db)
+        db.execute("""CREATE TABLE IF NOT EXISTS push_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guid TEXT, title TEXT, link TEXT, author TEXT,
+            category TEXT, pub_date TEXT, matched_keywords TEXT, pushed_at TEXT)""")
+        ensure_state_table(db)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_first_seen ON seen_posts(first_seen)")
+        db.commit()
     return db
 
 
@@ -259,6 +286,7 @@ def get_stats():
     today_pushed = db.execute(
         "SELECT COUNT(*) FROM push_history WHERE pushed_at >= datetime('now', '-1 day')"
     ).fetchone()[0]
+    keyword_count = db.execute("SELECT COUNT(*) FROM keywords").fetchone()[0]
     health = {
         "last_rss_success": state_get(db, "last_rss_success", "暂无数据"),
         "consecutive_errors": state_get(db, "consecutive_errors", "0"),
@@ -269,7 +297,7 @@ def get_stats():
         "total_seen": total_seen,
         "matched": matched,
         "today_pushed": today_pushed,
-        "keyword_count": len(get_keyword_texts()),
+        "keyword_count": keyword_count,
         "health": health,
     }
 
@@ -775,10 +803,23 @@ def handle_message(message):
 
 # ============ 主循环 ============
 
+_running = True
+
+def _signal_handler(signum, frame):
+    global _running
+    _running = False
+
+signal.signal(signal.SIGTERM, _signal_handler)
+signal.signal(signal.SIGINT, _signal_handler)
+
+
 def main():
+    global _running
     if not BOT_TOKEN or not CHAT_ID:
         print("[ERROR] NODESEEK_BOT_TOKEN or NODESEEK_CHAT_ID not set", file=sys.stderr)
         sys.exit(1)
+
+    init_db()
 
     result = tg_api("getMe")
     if not result.get("ok"):
@@ -815,7 +856,7 @@ def main():
     offset = load_offset()
     print(f"[INFO] Resumed from offset: {offset}")
 
-    while True:
+    while _running:
         try:
             result = tg_api("getUpdates", request_timeout=65, offset=offset, timeout=50)
             if not result.get("ok"):
@@ -837,11 +878,12 @@ def main():
                     print(f"[PERF] message processed in {time.monotonic() - started:.3f}s")
 
         except KeyboardInterrupt:
-            print("\n[INFO] Shutting down...")
             break
         except Exception as e:
             print(f"[ERROR] {e}", file=sys.stderr)
             time.sleep(5)
+
+    print("[INFO] Bot stopped.")
 
 
 if __name__ == "__main__":

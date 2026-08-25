@@ -2,10 +2,28 @@
 
 import json
 import sqlite3
+import time
+from functools import wraps
 from urllib.error import HTTPError
 
 
 STATE_BOOTSTRAPPED = "initial_baseline_complete"
+
+
+def retry_on_busy(max_attempts=3, delay=0.5):
+    """Retry on SQLite database-locked errors (two processes share one DB)."""
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_attempts):
+                try:
+                    return fn(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    if "locked" not in str(e).lower() or attempt == max_attempts - 1:
+                        raise
+                    time.sleep(delay * (attempt + 1))
+        return wrapper
+    return decorator
 
 
 def ensure_keywords_schema(db: sqlite3.Connection) -> None:
@@ -93,10 +111,12 @@ def mark_bootstrapped(db: sqlite3.Connection) -> None:
     db.commit()
 
 
-def state_set(db: sqlite3.Connection, key: str, value: str) -> None:
+def state_set(db: sqlite3.Connection, key: str, value: str, *, commit: bool = True) -> None:
+    """Set a state key. Pass commit=False to batch multiple state_set calls."""
     ensure_state_table(db)
     db.execute("INSERT OR REPLACE INTO monitor_state (key, value) VALUES (?, ?)", (key, value))
-    db.commit()
+    if commit:
+        db.commit()
 
 
 def state_get(db: sqlite3.Connection, key: str, default=None):

@@ -63,7 +63,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        RotatingFileHandler("/root/nodeseek_monitor.log", maxBytes=2_000_000, backupCount=1),
+        RotatingFileHandler("/root/nodeseek_monitor.log", maxBytes=2_000_000, backupCount=3),
     ],
 )
 log = logging.getLogger("nodeseek")
@@ -147,6 +147,12 @@ def add_push_history(db, post, matched_kw):
 
 # ============ RSS 解析 ============
 
+def clean_text(text):
+    text = text.replace("\x1b", "")
+    text = re.sub(r'\[\d+m', '', text)
+    return text
+
+
 def fetch_rss(url, retries=MAX_RETRIES):
     for attempt in range(retries):
         try:
@@ -202,11 +208,6 @@ def parse_rss(xml_text):
 
 
 # ============ 关键词匹配 ============
-
-def clean_text(text):
-    text = text.replace("\x1b", "")
-    text = re.sub(r'\[\d+m', '', text)
-    return text
 
 
 def match_keywords(text, keywords):
@@ -416,8 +417,8 @@ def main():
                         new_matches += 1
                         pushed_this_round += 1
                         add_push_history(db, post, matched)
-                        state_set(db, "last_match", datetime.now(timezone.utc).isoformat())
-                        state_set(db, "last_match_title", post["title"][:120])
+                        state_set(db, "last_match", datetime.now(timezone.utc).isoformat(), commit=False)
+                        state_set(db, "last_match_title", post["title"][:120], commit=False)
                         log.info(f"[NEW] {post['title']} -> {matched}")
                         time.sleep(TELEGRAM_INTERVAL)
                         mark_seen(db, post["guid"], post["title"], post["link"],
@@ -435,12 +436,14 @@ def main():
 
             db.commit()
 
-            # 清理旧数据 + 历史
-            if poll_count % 100 == 0:
-                db.execute("DELETE FROM seen_posts WHERE first_seen < datetime('now', '-7 days')")
+            # 清理旧数据 + 历史 + WAL checkpoint（约每小时一次）
+            if poll_count % 1800 == 0:
+                deleted_seen = db.execute("DELETE FROM seen_posts WHERE first_seen < datetime('now', '-7 days')").rowcount
                 db.execute("DELETE FROM push_history WHERE id NOT IN (SELECT id FROM push_history ORDER BY id DESC LIMIT 100)")
+                db.execute("PRAGMA wal_checkpoint(PASSIVE)")
                 db.commit()
-                log.info(f"清理旧数据完成 (poll #{poll_count})")
+                if deleted_seen > 0:
+                    log.info(f"清理旧数据: 删除 {deleted_seen} 条过期记录，WAL checkpoint 完成 (poll #{poll_count})")
 
         except Exception as e:
             consecutive_errors += 1
