@@ -33,7 +33,6 @@ from logging.handlers import RotatingFileHandler
 RSS_URL = "https://rss.nodeseek.com/"
 DB_PATH = "/root/nodeseek_monitor.db"
 PAUSE_FILE = "/root/nodeseek_paused"        # 暂停标志文件
-CATEGORIES_FILE = "/root/nodeseek_categories.json"  # 分类过滤配置
 POLL_INTERVAL = 2
 TELEGRAM_INTERVAL = 0.5
 MAX_RETRIES = 3
@@ -383,8 +382,9 @@ def main():
             poll_count += 1
             # 每约 30 秒持久化一次健康指标，避免 2 秒轮询造成无谓 SQLite 写入。
             if poll_count % 15 == 0:
-                state_set(db, "last_rss_success", datetime.now(timezone.utc).isoformat())
-                state_set(db, "consecutive_errors", "0")
+                state_set(db, "last_rss_success", datetime.now(timezone.utc).isoformat(), commit=False)
+                state_set(db, "consecutive_errors", "0", commit=False)
+                db.commit()
 
             # 逆序处理
             new_matches = 0
@@ -451,8 +451,9 @@ def main():
                 outage_started = time.monotonic()
             # 记录故障指标；状态页可显示而不必读取日志。
             try:
-                state_set(db, "consecutive_errors", str(consecutive_errors))
-                state_set(db, "last_rss_error", str(e)[:200])
+                state_set(db, "consecutive_errors", str(consecutive_errors), commit=False)
+                state_set(db, "last_rss_error", str(e)[:200], commit=False)
+                db.commit()
             except sqlite3.Error:
                 pass
             log.error(f"主循环错误 (连续 {consecutive_errors} 次): {e}")

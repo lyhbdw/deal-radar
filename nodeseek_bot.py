@@ -12,7 +12,6 @@ import sqlite3
 import subprocess
 import urllib.request
 import socket
-import http.client
 import signal
 from contextlib import contextmanager
 from html import escape as html_escape
@@ -39,18 +38,12 @@ _chat_id_raw = os.environ.get("NODESEEK_CHAT_ID", "")
 CHAT_ID = int(_chat_id_raw) if _chat_id_raw.isdigit() else 0
 DB_PATH = "/root/nodeseek_monitor.db"
 PAUSE_FILE = "/root/nodeseek_paused"
-CATEGORIES_FILE = "/root/nodeseek_categories.json"
 OFFSET_FILE = "/root/nodeseek_offset.txt"
 API_BASE = f"https://api.telegram.org/bot{BOT_TOKEN}"
 TELEGRAM_HOST = "api.telegram.org"
 MONITOR_SERVICE = "nodeseek-monitor"
 
 ALLOWED_USERS = {CHAT_ID}
-
-SUGGESTED_KEYWORDS = [
-    "甲骨文", "VMISS", "DMIT", "家宽", "GPT",
-    "白嫖", "免费", "CN2", "9929", "拼车",
-]
 
 ALL_CATEGORIES = ["trade", "daily", "review", "tech", "info", "dev", "carpool", "expose", "photo-share"]
 
@@ -279,28 +272,6 @@ def get_push_history(limit=10):
     return rows
 
 
-def get_stats():
-    db = get_db()
-    total_seen = db.execute("SELECT COUNT(*) FROM seen_posts").fetchone()[0]
-    matched = db.execute("SELECT COUNT(*) FROM push_history").fetchone()[0]
-    today_pushed = db.execute(
-        "SELECT COUNT(*) FROM push_history WHERE pushed_at >= datetime('now', '-1 day')"
-    ).fetchone()[0]
-    keyword_count = db.execute("SELECT COUNT(*) FROM keywords").fetchone()[0]
-    health = {
-        "last_rss_success": state_get(db, "last_rss_success", "暂无数据"),
-        "consecutive_errors": state_get(db, "consecutive_errors", "0"),
-        "last_match": state_get(db, "last_match", "暂无"),
-    }
-    db.close()
-    return {
-        "total_seen": total_seen,
-        "matched": matched,
-        "today_pushed": today_pushed,
-        "keyword_count": keyword_count,
-        "health": health,
-    }
-
 # ============ 键盘布局 ============
 
 def main_menu_keyboard():
@@ -324,24 +295,6 @@ def main_menu_keyboard():
             {"text": "❓ 帮助", "callback_data": "help"},
         ],
     ]}
-
-
-def suggest_keyboard():
-    kws = get_keyword_texts()
-    existing = {kw.casefold() for kw in kws}
-    rows = []
-    row = []
-    for kw in SUGGESTED_KEYWORDS:
-        if kw.casefold() not in existing:
-            row.append({"text": f"➕ {kw}", "callback_data": f"quickadd:{kw}"})
-            if len(row) == 3:
-                rows.append(row)
-                row = []
-    if row:
-        rows.append(row)
-    rows.append([{"text": "✏️ 手动输入", "callback_data": "manual_input"}])
-    rows.append([{"text": "🔙 返回主菜单", "callback_data": "main"}])
-    return {"inline_keyboard": rows}
 
 
 def keywords_keyboard():
@@ -416,8 +369,23 @@ def render_main(chat_id, message_id=None, use_edit=False):
 
 
 def render_status(chat_id, message_id=None, use_edit=False):
-    stats = get_stats()
-    kws = get_keyword_texts()
+    db = get_db()
+    stats = {
+        "total_seen": db.execute("SELECT COUNT(*) FROM seen_posts").fetchone()[0],
+        "matched": db.execute("SELECT COUNT(*) FROM push_history").fetchone()[0],
+        "today_pushed": db.execute(
+            "SELECT COUNT(*) FROM push_history WHERE pushed_at >= datetime('now', '-1 day')"
+        ).fetchone()[0],
+        "keyword_count": db.execute("SELECT COUNT(*) FROM keywords").fetchone()[0],
+        "health": {
+            "last_rss_success": state_get(db, "last_rss_success", "暂无数据"),
+            "consecutive_errors": state_get(db, "consecutive_errors", "0"),
+            "last_match": state_get(db, "last_match", "暂无"),
+        },
+    }
+    kw_rows = db.execute("SELECT keyword FROM keywords ORDER BY keyword").fetchall()
+    db.close()
+    kws = [r[0] for r in kw_rows]
     kw_display = "、".join(kws[:10]) if kws else "无"
     if len(kws) > 10:
         kw_display += f" 等{len(kws)}个"
@@ -500,11 +468,6 @@ def begin_keyword_input(chat_id, message_id=None, use_edit=False):
         edit_message(chat_id, message_id, text, reply_markup=back_keyboard())
     else:
         send_message(chat_id, text, reply_markup=back_keyboard())
-
-
-# 保留兼容入口；现在添加关键词默认直接手动输入。
-def render_add_menu(chat_id, message_id=None, use_edit=False, extra_text=""):
-    begin_keyword_input(chat_id, message_id, use_edit)
 
 
 def render_history(chat_id, message_id=None, use_edit=False):
@@ -628,16 +591,6 @@ def handle_callback(callback):
         user_states[user_id] = "awaiting_keyword"
         begin_keyword_input(chat_id, message_id, use_edit=True)
 
-    elif data.startswith("quickadd:"):
-        kw = data[9:]
-        added, skipped, rejected = add_keywords([kw])
-        if added:
-            render_add_menu(chat_id, message_id, use_edit=True, extra_text=f"✅ 已添加: {escape_html(kw)}")
-        elif rejected:
-            render_add_menu(chat_id, message_id, use_edit=True, extra_text=f"⚠️ 无法添加: {escape_html(rejected[0][1])}")
-        else:
-            render_add_menu(chat_id, message_id, use_edit=True, extra_text=f"⚠️ 已存在: {escape_html(kw)}")
-
     elif data == "test_push":
         render_test(chat_id, message_id, use_edit=True)
 
@@ -651,8 +604,10 @@ def handle_callback(callback):
         render_cat_filter(chat_id, message_id, use_edit=True)
 
     elif data == "all_cats":
+        db = get_db()
         for cat in ALL_CATEGORIES:
-            set_category_enabled(cat, True)
+            set_category_config_enabled(db, cat, True)
+        db.close()
         render_cat_filter(chat_id, message_id, use_edit=True)
 
     elif data.startswith("toggle_cat:"):
