@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily NodeSeek SQLite backup
+Description=Daily FeedSentinel SQLite backup
 
 [Timer]
 OnCalendar=daily

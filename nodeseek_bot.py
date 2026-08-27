@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-多源 RSS 关键词监控 - 交互式 Telegram Bot
+FeedSentinel · 多源订阅监控控制台
 全程按钮操作。管理 NodeSeek + 烧饼论坛 两个源共享的关键词。
 """
 
@@ -391,7 +391,7 @@ def render_main(chat_id, message_id=None, use_edit=False):
         state = "🟢 正在监控"
     sources_line = " ".join(f"{s['emoji']}{s['name']}" for s in SOURCES)
     text = (
-        "📡 <b>多源 RSS 雷达</b>\n"
+        "🛡 <b>FeedSentinel · 订阅哨兵</b>\n"
         "━━━━━━━━━━━━\n"
         f"{state}\n\n"
         f"监控源：{sources_line}\n\n"

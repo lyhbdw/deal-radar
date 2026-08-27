@@ -1,5 +1,5 @@
 [Unit]
-Description=RSS Radar Multi-Source Monitor
+Description=FeedSentinel Multi-Source Monitor
 After=network-online.target
 Wants=network-online.target
 

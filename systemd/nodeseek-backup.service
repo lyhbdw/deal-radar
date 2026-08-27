@@ -1,5 +1,5 @@
 [Unit]
-Description=Back up NodeSeek SQLite state
+Description=Back up FeedSentinel SQLite state
 
 [Service]
 Type=oneshot
