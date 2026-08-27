@@ -3,4 +3,4 @@ Description=Back up NodeSeek SQLite state
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /opt/nodeseek-radar/nodeseek_backup.py
+ExecStart=/usr/bin/python3 /root/nodeseek_backup.py

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-NodeSeek 关键词监控 - 交互式 Telegram Bot
-全程按钮操作。
+多源 RSS 关键词监控 - 交互式 Telegram Bot
+全程按钮操作。管理 NodeSeek + 烧饼论坛 两个源共享的关键词。
 """
 
 import json
@@ -17,9 +17,12 @@ from contextlib import contextmanager
 from html import escape as html_escape
 from datetime import datetime, timezone
 from nodeseek_core import (
+    SOURCES, SOURCE_IDS, get_source,
     ensure_keywords_schema, ensure_state_table, get_category_config,
     set_category_enabled as set_category_config_enabled,
-    state_get, validate_keywords,
+    state_get, validate_keywords, source_is_enabled, set_source_enabled,
+    get_enabled_sources, set_enabled_sources,
+    notification_counts, claim_due_notifications, mark_notification_retry,
 )
 
 # ============ 配置 ============
@@ -44,8 +47,6 @@ TELEGRAM_HOST = "api.telegram.org"
 MONITOR_SERVICE = "nodeseek-monitor"
 
 ALLOWED_USERS = {CHAT_ID}
-
-ALL_CATEGORIES = ["trade", "daily", "review", "tech", "info", "dev", "carpool", "expose", "photo-share"]
 
 user_states = {}
 
@@ -82,7 +83,6 @@ def tg_api(method, request_timeout=60, **kwargs):
 
 
 def send_message(chat_id, text, reply_markup=None):
-    # 交互优先：不要在每次回复前同步等待“正在输入”请求。
     return tg_api("sendMessage", request_timeout=10, chat_id=chat_id, text=text,
                   parse_mode="HTML", reply_markup=reply_markup,
                   disable_web_page_preview=True)
@@ -135,26 +135,29 @@ def resume_monitor():
     if os.path.exists(PAUSE_FILE):
         os.remove(PAUSE_FILE)
 
-# ============ 分类控制 ============
+# ============ 分类控制（per-source） ============
 
-def get_categories_config():
+def get_categories_config(source_id):
     db = get_db()
-    config = get_category_config(db)
+    config = get_category_config(db, source_id)
     db.close()
     return config or None
 
 
-def set_category_enabled(cat, enabled):
+def set_category_enabled(source_id, cat, enabled):
     db = get_db()
-    set_category_config_enabled(db, cat, enabled)
+    set_category_config_enabled(db, source_id, cat, enabled)
     db.close()
 
 
-def get_enabled_categories():
-    config = get_categories_config()
+def get_enabled_categories(source_id):
+    config = get_categories_config(source_id)
     if config is None:
         return None
-    return {k for k, v in config.items() if v}
+    source = get_source(source_id)
+    all_cats = set(source["categories"]) if source else set()
+    enabled = {k for k, v in config.items() if v}
+    return enabled | (all_cats - set(config))
 
 # ============ 进程状态 ============
 
@@ -175,20 +178,26 @@ def is_monitor_running():
 _schema_initialized = False
 
 def init_db():
-    """Run schema creation once at startup; subsequent get_db() calls skip DDL."""
+    """Run schema creation once at startup."""
     global _schema_initialized
     db = sqlite3.connect(DB_PATH, timeout=10)
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("""CREATE TABLE IF NOT EXISTS seen_posts (
         guid TEXT PRIMARY KEY, title TEXT, link TEXT, author TEXT,
-        category TEXT, pub_date TEXT, matched_keywords TEXT, first_seen TEXT)""")
+        category TEXT, pub_date TEXT, matched_keywords TEXT, first_seen TEXT,
+        source TEXT DEFAULT 'nodeseek')""")
     ensure_keywords_schema(db)
     db.execute("""CREATE TABLE IF NOT EXISTS push_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         guid TEXT, title TEXT, link TEXT, author TEXT,
-        category TEXT, pub_date TEXT, matched_keywords TEXT, pushed_at TEXT)""")
+        category TEXT, pub_date TEXT, matched_keywords TEXT, pushed_at TEXT,
+        source TEXT DEFAULT 'nodeseek')""")
     ensure_state_table(db)
     db.execute("CREATE INDEX IF NOT EXISTS idx_first_seen ON seen_posts(first_seen)")
+    # Migrate legacy single-source schema BEFORE creating source-dependent index
+    from nodeseek_core import migrate_multi_source
+    migrate_multi_source(db)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_source ON seen_posts(source)")
     db.commit()
     db.close()
     _schema_initialized = True
@@ -200,14 +209,19 @@ def get_db():
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("""CREATE TABLE IF NOT EXISTS seen_posts (
             guid TEXT PRIMARY KEY, title TEXT, link TEXT, author TEXT,
-            category TEXT, pub_date TEXT, matched_keywords TEXT, first_seen TEXT)""")
+            category TEXT, pub_date TEXT, matched_keywords TEXT, first_seen TEXT,
+            source TEXT DEFAULT 'nodeseek')""")
         ensure_keywords_schema(db)
         db.execute("""CREATE TABLE IF NOT EXISTS push_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             guid TEXT, title TEXT, link TEXT, author TEXT,
-            category TEXT, pub_date TEXT, matched_keywords TEXT, pushed_at TEXT)""")
+            category TEXT, pub_date TEXT, matched_keywords TEXT, pushed_at TEXT,
+            source TEXT DEFAULT 'nodeseek')""")
         ensure_state_table(db)
         db.execute("CREATE INDEX IF NOT EXISTS idx_first_seen ON seen_posts(first_seen)")
+        from nodeseek_core import migrate_multi_source
+        migrate_multi_source(db)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_source ON seen_posts(source)")
         db.commit()
     return db
 
@@ -266,11 +280,11 @@ def clear_keywords():
 def get_push_history(limit=10):
     db = get_db()
     rows = db.execute(
-        "SELECT title, link, author, category, matched_keywords, pushed_at FROM push_history ORDER BY id DESC LIMIT ?",
+        "SELECT title, link, author, category, matched_keywords, pushed_at, source "
+        "FROM push_history ORDER BY id DESC LIMIT ?",
         (limit,)).fetchall()
     db.close()
     return rows
-
 
 # ============ 键盘布局 ============
 
@@ -284,14 +298,21 @@ def main_menu_keyboard():
         ],
         [
             {"text": "📊 监控状态", "callback_data": "status"},
-            {"text": "📂 分类过滤", "callback_data": "cat_filter"},
+            {"text": "🗂 源管理", "callback_data": "sources"},
         ],
         [
+            {"text": "📂 分类过滤", "callback_data": "src_cat"},
             {"text": "📜 推送历史", "callback_data": "history"},
-            {"text": "🧪 测试推送", "callback_data": "test_push"},
         ],
         [
+            {"text": "📅 今日摘要", "callback_data": "digest"},
+            {"text": "📥 推送队列", "callback_data": "queue"},
+        ],
+        [
+            {"text": "🧪 测试推送", "callback_data": "test_push"},
             pause_btn,
+        ],
+        [
             {"text": "❓ 帮助", "callback_data": "help"},
         ],
     ]}
@@ -321,23 +342,36 @@ def keywords_keyboard():
     return {"inline_keyboard": rows}
 
 
-def category_keyboard():
-    config = get_categories_config()
+def source_select_keyboard(action):
+    """选择源（用于分类过滤等需要先选源的操作）。"""
+    rows = []
+    for s in SOURCES:
+        rows.append([{"text": f"{s['emoji']} {s['name']}", "callback_data": f"{action}:{s['id']}"}])
+    rows.append([{"text": "🔙 返回主菜单", "callback_data": "main"}])
+    return {"inline_keyboard": rows}
+
+
+def category_keyboard(source_id):
+    source = get_source(source_id)
+    if not source:
+        return back_keyboard()
+    cats = source["categories"]
+    config = get_categories_config(source_id)
     if config is None:
-        config = {c: True for c in ALL_CATEGORIES}
+        config = {c: True for c in cats}
     rows = []
     row = []
-    for cat in ALL_CATEGORIES:
+    for cat in cats:
         enabled = config.get(cat, True)
         icon = "✅" if enabled else "⬜"
-        row.append({"text": f"{icon} {cat}", "callback_data": f"toggle_cat:{cat}"})
+        row.append({"text": f"{icon} {cat}", "callback_data": f"toggle_cat:{source_id}:{cat}"})
         if len(row) == 2:
             rows.append(row)
             row = []
     if row:
         rows.append(row)
-    rows.append([{"text": "🔄 全部启用", "callback_data": "all_cats"}])
-    rows.append([{"text": "🔙 返回主菜单", "callback_data": "main"}])
+    rows.append([{"text": "🔄 全部启用", "callback_data": f"all_cats:{source_id}"}])
+    rows.append([{"text": "🔙 返回源选择", "callback_data": "src_cat"}])
     return {"inline_keyboard": rows}
 
 
@@ -355,12 +389,13 @@ def render_main(chat_id, message_id=None, use_edit=False):
         state = "🟡 监控已暂停"
     else:
         state = "🟢 正在监控"
+    sources_line = " ".join(f"{s['emoji']}{s['name']}" for s in SOURCES)
     text = (
-        "🛰 <b>NodeSeek 雷达</b>\n"
+        "📡 <b>多源 RSS 雷达</b>\n"
         "━━━━━━━━━━━━\n"
         f"{state}\n\n"
-        "命中关键词的新帖会自动推送到这里。\n"
-        "从下面开始管理关键词、分类和监控状态。"
+        f"监控源：{sources_line}\n\n"
+        "关键词对所有源同时生效。命中关键词的新帖会自动推送到这里。"
     )
     if use_edit:
         edit_message(chat_id, message_id, text, reply_markup=main_menu_keyboard())
@@ -370,22 +405,7 @@ def render_main(chat_id, message_id=None, use_edit=False):
 
 def render_status(chat_id, message_id=None, use_edit=False):
     db = get_db()
-    stats = {
-        "total_seen": db.execute("SELECT COUNT(*) FROM seen_posts").fetchone()[0],
-        "matched": db.execute("SELECT COUNT(*) FROM push_history").fetchone()[0],
-        "today_pushed": db.execute(
-            "SELECT COUNT(*) FROM push_history WHERE pushed_at >= datetime('now', '-1 day')"
-        ).fetchone()[0],
-        "keyword_count": db.execute("SELECT COUNT(*) FROM keywords").fetchone()[0],
-        "health": {
-            "last_rss_success": state_get(db, "last_rss_success", "暂无数据"),
-            "consecutive_errors": state_get(db, "consecutive_errors", "0"),
-            "last_match": state_get(db, "last_match", "暂无"),
-        },
-    }
-    kw_rows = db.execute("SELECT keyword FROM keywords ORDER BY keyword").fetchall()
-    db.close()
-    kws = [r[0] for r in kw_rows]
+    kws = [r[0] for r in db.execute("SELECT keyword FROM keywords ORDER BY keyword").fetchall()]
     kw_display = "、".join(kws[:10]) if kws else "无"
     if len(kws) > 10:
         kw_display += f" 等{len(kws)}个"
@@ -396,35 +416,49 @@ def render_status(chat_id, message_id=None, use_edit=False):
     if monitor_ok and paused:
         monitor_status = "🟡 已暂停"
 
-    enabled_cats = get_enabled_categories()
-    if enabled_cats is None:
-        cat_display = "全部"
-    else:
-        cat_display = "、".join(sorted(enabled_cats)) if enabled_cats else "无"
-
-    health = stats["health"]
-    last_success = health["last_rss_success"]
-    last_match = health["last_match"]
-    if last_success != "暂无数据":
-        last_success = last_success.replace("T", " ").replace("+00:00", " UTC")
-    if last_match != "暂无":
-        last_match = last_match.replace("T", " ").replace("+00:00", " UTC")
-
     text = (
-        "📡 <b>监控状态</b>\n"
+        "📊 <b>监控状态</b>\n"
         "━━━━━━━━━━━━\n\n"
-        f"{monitor_status}\n"
-        f"关键词：<b>{stats['keyword_count']}</b> 个\n"
-        f"已处理：<b>{stats['total_seen']}</b> 条\n"
-        f"成功推送：<b>{stats['matched']}</b> 条（24小时 <b>{stats['today_pushed']}</b> 条）\n\n"
-        f"📂 分类　{escape_html(cat_display)}\n"
-        f"🏷 关键词　{escape_html(kw_display)}\n\n"
-        "<b>健康检查</b>\n"
-        f"• RSS 最近成功：{escape_html(last_success)}\n"
-        f"• 连续错误：{escape_html(health['consecutive_errors'])}\n"
-        f"• 最近匹配：{escape_html(last_match)}\n\n"
-        "每 2 秒拉取一次 RSS（0.5 QPS）"
+        f"总状态：{monitor_status}\n"
+        f"关键词：<b>{len(kws)}</b> 个（所有源共享）\n\n"
     )
+
+    # 每个源的健康状况
+    text += "<b>各源状态</b>\n"
+    for s in SOURCES:
+        sid = s["id"]
+        total_seen = db.execute("SELECT COUNT(*) FROM seen_posts WHERE source = ?", (sid,)).fetchone()[0]
+        total_pushed = db.execute("SELECT COUNT(*) FROM push_history WHERE source = ?", (sid,)).fetchone()[0]
+        today_pushed = db.execute(
+            "SELECT COUNT(*) FROM push_history WHERE source = ? AND pushed_at >= datetime('now', '-1 day')",
+            (sid,)).fetchone()[0]
+        last_success = state_get(db, f"last_rss_success:{sid}", "暂无数据")
+        consec_err = state_get(db, f"consecutive_errors:{sid}", "0")
+        last_match = state_get(db, f"last_match:{sid}", "暂无")
+
+        if last_success != "暂无数据":
+            last_success = last_success.replace("T", " ").replace("+00:00", " UTC")
+        if last_match != "暂无":
+            last_match = last_match.replace("T", " ").replace("+00:00", " UTC")
+
+        # 分类显示
+        enabled_cats = get_enabled_categories(sid)
+        if enabled_cats is None:
+            cat_display = "全部"
+        else:
+            cat_display = "、".join(sorted(enabled_cats)) if enabled_cats else "无"
+
+        text += (
+            f"\n{s['emoji']} <b>{s['name']}</b>\n"
+            f"  已处理 <b>{total_seen}</b> · 推送 <b>{total_pushed}</b>（24h {today_pushed}）\n"
+            f"  分类：{escape_html(cat_display)}\n"
+            f"  RSS 成功：{escape_html(last_success)}\n"
+            f"  连续错误：{escape_html(consec_err)} · 最近匹配：{escape_html(last_match)}\n"
+        )
+
+    text += f"\n每 {1}s 轮询各源"
+    db.close()
+
     kb = {"inline_keyboard": [
         [{"text": "🔄 刷新", "callback_data": "status"}],
         [{"text": "🔙 返回主菜单", "callback_data": "main"}],
@@ -438,7 +472,7 @@ def render_status(chat_id, message_id=None, use_edit=False):
 def render_keywords(chat_id, message_id=None, use_edit=False, extra_text=""):
     kws = get_keyword_texts()
     if kws:
-        text = f"🏷 <b>关键词</b>　共 <b>{len(kws)}</b> 个\n"
+        text = f"🏷 <b>关键词</b>　共 <b>{len(kws)}</b> 个（所有源共享）\n"
         text += "━━━━━━━━━━━━\n\n"
         text += "\n".join(f"<code>{i+1:02d}</code>　{escape_html(kw)}" for i, kw in enumerate(kws))
         text += "\n\n点下面的关键词即可删除。"
@@ -446,7 +480,7 @@ def render_keywords(chat_id, message_id=None, use_edit=False, extra_text=""):
         text = (
             "🏷 <b>关键词</b>\n"
             "━━━━━━━━━━━━\n\n"
-            "还没有订阅词。添加后，命中新帖会自动推送。"
+            "还没有订阅词。添加后，命中新帖会自动推送（所有源同时生效）。"
         )
     if extra_text:
         text = extra_text + "\n\n" + text
@@ -462,6 +496,7 @@ def begin_keyword_input(chat_id, message_id=None, use_edit=False):
         "━━━━━━━━━━━━\n\n"
         "直接发送关键词即可。多个关键词请用空格隔开。\n"
         "例如：<code>甲骨文 VMISS 家宽</code>\n\n"
+        "关键词会同时对所有源生效。\n\n"
         "正在等待输入…"
     )
     if use_edit:
@@ -480,16 +515,15 @@ def render_history(chat_id, message_id=None, use_edit=False):
         )
     else:
         text = "🗂 <b>最近推送</b>　最多显示 10 条\n━━━━━━━━━━━━\n\n"
-        for i, (title, link, author, category, matched_kw, pushed_at) in enumerate(history, 1):
-            # 截断标题
+        for i, (title, link, author, category, matched_kw, pushed_at, source_id) in enumerate(history, 1):
+            source = get_source(source_id) or {"emoji": "📌", "name": source_id}
             short_title = title[:40] + ("..." if len(title) > 40 else "")
-            # 时间格式化
             try:
                 dt = datetime.fromisoformat(pushed_at.replace("Z", "+00:00"))
                 time_str = dt.strftime("%m-%d %H:%M")
             except Exception:
                 time_str = pushed_at[:16]
-            text += f"<b>{i:02d}</b>　<a href=\"{escape_html(link)}\">{escape_html(short_title)}</a>\n"
+            text += f"<b>{i:02d}</b> {source['emoji']} <a href=\"{escape_html(link)}\">{escape_html(short_title)}</a>\n"
             text += f"　{escape_html(category)} · {escape_html(author)} · {escape_html(matched_kw)}\n"
             text += f"　{time_str}\n\n"
     kb = {"inline_keyboard": [
@@ -502,39 +536,54 @@ def render_history(chat_id, message_id=None, use_edit=False):
         send_message(chat_id, text, reply_markup=kb)
 
 
-def render_cat_filter(chat_id, message_id=None, use_edit=False):
-    config = get_categories_config()
+def render_src_cat_select(chat_id, message_id=None, use_edit=False):
+    text = (
+        "📂 <b>分类过滤</b>\n"
+        "━━━━━━━━━━━━\n\n"
+        "选择一个源来管理它的分类过滤。"
+    )
+    if use_edit:
+        edit_message(chat_id, message_id, text, reply_markup=source_select_keyboard("cat_filter"))
+    else:
+        send_message(chat_id, text, reply_markup=source_select_keyboard("cat_filter"))
+
+
+def render_cat_filter(chat_id, source_id, message_id=None, use_edit=False):
+    source = get_source(source_id)
+    if not source:
+        render_src_cat_select(chat_id, message_id, use_edit=True)
+        return
+    config = get_categories_config(source_id)
     if config is None:
         active = "全部启用"
     else:
         enabled = [k for k, v in config.items() if v]
         active = "、".join(enabled) if enabled else "无"
     text = (
-        "📂 <b>分类过滤</b>\n"
+        f"📂 <b>{source['emoji']} {source['name']} 分类过滤</b>\n"
         "━━━━━━━━━━━━\n\n"
         f"正在关注：<b>{escape_html(active)}</b>\n\n"
         "点分类名称即可开关；关闭的分类不会触发推送。"
     )
     if use_edit:
-        edit_message(chat_id, message_id, text, reply_markup=category_keyboard())
+        edit_message(chat_id, message_id, text, reply_markup=category_keyboard(source_id))
     else:
-        send_message(chat_id, text, reply_markup=category_keyboard())
+        send_message(chat_id, text, reply_markup=category_keyboard(source_id))
 
 
 def render_test(chat_id, message_id=None, use_edit=False):
     text = (
-        "🛰 <b>NodeSeek 命中</b>\n"
+        "🧪 <b>推送预览</b>\n"
         "━━━━━━━━━━━━\n"
         "<b>这是一条推送预览</b>\n\n"
         "推送模板显示正常，关键词命中后会以这个样式发送。\n\n"
-        "<code>test · NodeSeek · " + datetime.now(timezone.utc).strftime("%m-%d %H:%M") + "</code>\n"
+        "<code>测试分类 · 测试作者 · " + datetime.now(timezone.utc).strftime("%m-%d %H:%M") + "</code>\n"
         "🏷 #测试 #预览\n"
-        "🔗 <a href=\"https://www.nodeseek.com/\">打开原帖</a>"
+        '🔗 <a href="https://www.nodeseek.com/">打开原帖</a>'
     )
     keyboard = {"inline_keyboard": [
         [
             {"text": "🔗 查看原帖", "url": "https://www.nodeseek.com/"},
-            {"text": "📂 test", "callback_data": "cat:test"},
         ],
         [{"text": "🔙 返回主菜单", "callback_data": "main"}],
     ]}
@@ -545,23 +594,75 @@ def render_test(chat_id, message_id=None, use_edit=False):
 
 
 def render_help(chat_id, message_id=None, use_edit=False):
+    sources_line = " ".join(f"{s['emoji']}{s['name']}" for s in SOURCES)
     text = (
         "❔ <b>使用说明</b>\n"
         "━━━━━━━━━━━━\n\n"
+        f"监控源：{sources_line}\n"
+        "关键词对所有源同时生效。\n\n"
         "<b>管理</b>\n"
         "• 添加关键词：点「添加关键词」或发送 <code>/add 词1 词2</code>\n"
         "• 删除关键词：在列表点名称，或发送 <code>/del 词1</code>\n"
         "• 清空全部：<code>/clear confirm</code>\n\n"
         "<b>筛选</b>\n"
-        "• 分类过滤可关闭不想看的板块。\n"
+        "• 分类过滤可单独关闭某个源不想看的板块。\n"
         "• 暂停监控后不拉取 RSS，也不会产生推送。\n\n"
         "<b>频率</b>\n"
-        "RSS 每 2 秒检查一次。命中关键词的新帖会带原帖链接推送到这里。"
+        "RSS 每 1 秒检查一次。命中关键词的新帖会带原帖链接推送到这里。"
     )
     if use_edit:
         edit_message(chat_id, message_id, text, reply_markup=back_keyboard())
     else:
         send_message(chat_id, text, reply_markup=back_keyboard())
+
+# ============ 源管理 / 摘要 / 队列 ============
+
+def render_sources(chat_id, message_id=None, use_edit=False):
+    db = get_db()
+    lines = ["🗂 <b>监控源管理</b>", "━━━━━━━━━━━━", ""]
+    rows = []
+    for s in SOURCES:
+        sid = s["id"]
+        enabled = source_is_enabled(db, sid)
+        last_ok = state_get(db, f"last_rss_success:{sid}", "暂无")
+        err = state_get(db, f"consecutive_errors:{sid}", "0")
+        latency = state_get(db, f"last_fetch_duration_ms:{sid}", "?")
+        state = "🟢" if enabled and err == "0" else "🟡" if enabled else "⚫"
+        lines.append(f"{state} <b>{escape_html(s['name'])}</b> · {escape_html(str(latency))}ms · 连续错误 {escape_html(err)}")
+        lines.append(f"　最近成功：{escape_html(last_ok.replace('T',' ')[:19])}")
+        btn = "⏸ 禁用" if enabled else "▶️ 启用"
+        rows.append([{"text": f"{s['emoji']} {s['name']} {btn}", "callback_data": f"toggle_source:{sid}"}, {"text": "⚡ 刷新", "callback_data": f"refresh_source:{sid}"}])
+    db.close()
+    rows += [
+        [{"text":"✅ 仅开 NodeSeek","callback_data":"only_source:nodeseek"}, {"text":"✅ 仅开烧饼","callback_data":"only_source:sbsb"}],
+        [{"text":"✅ 仅开 IDC","callback_data":"only_source:idcflare"}, {"text":"✅ 全部开启","callback_data":"all_sources_on"}],
+        [{"text":"⏹ 全部关闭","callback_data":"all_sources_off"}],
+        [{"text":"🔄 刷新状态","callback_data":"sources"}],
+        [{"text":"🔙 返回主菜单","callback_data":"main"}],
+    ]
+    text = "\n".join(lines)
+    (edit_message if use_edit else send_message)(chat_id, message_id, text, reply_markup={"inline_keyboard":rows}) if use_edit else send_message(chat_id,text,reply_markup={"inline_keyboard":rows})
+
+def render_digest(chat_id, message_id=None, use_edit=False):
+    db=get_db(); lines=["📅 <b>近 24 小时命中摘要</b>","━━━━━━━━━━━━",""]
+    for s in SOURCES:
+        rows=db.execute("SELECT category,COUNT(*) FROM push_history WHERE source=? AND pushed_at>=datetime('now','-1 day') GROUP BY category ORDER BY COUNT(*) DESC",(s['id'],)).fetchall()
+        total=sum(x[1] for x in rows); cats='、'.join(f"{x[0]} {x[1]}" for x in rows[:5]) or '无'
+        lines.append(f"{s['emoji']} <b>{s['name']}</b>：{total} 条\n　{escape_html(cats)}")
+    db.close(); kb={"inline_keyboard":[[{"text":"🔄 刷新","callback_data":"digest"}],[{"text":"🔙 返回主菜单","callback_data":"main"}]]}
+    if use_edit: edit_message(chat_id,message_id,"\n".join(lines),reply_markup=kb)
+    else: send_message(chat_id,"\n".join(lines),reply_markup=kb)
+
+def render_queue(chat_id, message_id=None, use_edit=False):
+    db=get_db(); counts=notification_counts(db)
+    rows=db.execute("SELECT source,guid,attempts,last_error FROM notifications WHERE status!='sent' ORDER BY id DESC LIMIT 5").fetchall()
+    lines=["📥 <b>推送队列</b>","━━━━━━━━━━━━",f"待发送：<b>{counts.get('pending',0)}</b> · 发送中：<b>{counts.get('sending',0)}</b> · 已发送：{counts.get('sent',0)}",""]
+    if rows:
+        for source,guid,attempts,error in rows: lines.append(f"• {escape_html(source)} · 尝试 {attempts} 次\n　{escape_html((error or guid)[:100])}")
+    else: lines.append("队列为空，没有待重试的推送。")
+    db.close(); kb={"inline_keyboard":[[{"text":"🔄 刷新","callback_data":"queue"}],[{"text":"🔙 返回主菜单","callback_data":"main"}]]}
+    if use_edit: edit_message(chat_id,message_id,"\n".join(lines),reply_markup=kb)
+    else: send_message(chat_id,"\n".join(lines),reply_markup=kb)
 
 # ============ 回调处理 ============
 
@@ -584,6 +685,49 @@ def handle_callback(callback):
     elif data == "status":
         render_status(chat_id, message_id, use_edit=True)
 
+    elif data == "sources":
+        render_sources(chat_id, message_id, use_edit=True)
+
+    elif data == "digest":
+        render_digest(chat_id, message_id, use_edit=True)
+
+    elif data == "queue":
+        render_queue(chat_id, message_id, use_edit=True)
+
+    elif data.startswith("toggle_source:"):
+        sid = data.split(":", 1)[1]
+        db = get_db()
+        set_source_enabled(db, sid, not source_is_enabled(db, sid))
+        db.close()
+        render_sources(chat_id, message_id, use_edit=True)
+
+    elif data.startswith("only_source:"):
+        sid = data.split(":", 1)[1]
+        db = get_db()
+        set_enabled_sources(db, {sid})
+        db.close()
+        render_sources(chat_id, message_id, use_edit=True)
+
+    elif data == "all_sources_on":
+        db = get_db()
+        set_enabled_sources(db, {s["id"] for s in SOURCES})
+        db.close()
+        render_sources(chat_id, message_id, use_edit=True)
+
+    elif data == "all_sources_off":
+        db = get_db()
+        set_enabled_sources(db, set())
+        db.close()
+        render_sources(chat_id, message_id, use_edit=True)
+
+    elif data.startswith("refresh_source:"):
+        sid = data.split(":", 1)[1]
+        # Monitor observes this key on its next scheduling pass.
+        db = get_db()
+        db.execute("INSERT OR REPLACE INTO monitor_state(key,value) VALUES (?,?)", (f"force_refresh:{sid}", datetime.now(timezone.utc).isoformat()))
+        db.commit(); db.close()
+        render_sources(chat_id, message_id, use_edit=True)
+
     elif data == "kw_list":
         render_keywords(chat_id, message_id, use_edit=True)
 
@@ -600,21 +744,38 @@ def handle_callback(callback):
     elif data == "history":
         render_history(chat_id, message_id, use_edit=True)
 
-    elif data == "cat_filter":
-        render_cat_filter(chat_id, message_id, use_edit=True)
+    elif data == "src_cat":
+        render_src_cat_select(chat_id, message_id, use_edit=True)
+
+    elif data.startswith("cat_filter:"):
+        source_id = data[len("cat_filter:"):]
+        render_cat_filter(chat_id, source_id, message_id, use_edit=True)
 
     elif data == "all_cats":
-        db = get_db()
-        for cat in ALL_CATEGORIES:
-            set_category_config_enabled(db, cat, True)
-        db.close()
-        render_cat_filter(chat_id, message_id, use_edit=True)
+        # Legacy callback without source — redirect to selector
+        render_src_cat_select(chat_id, message_id, use_edit=True)
+
+    elif data.startswith("all_cats:"):
+        source_id = data[len("all_cats:"):]
+        source = get_source(source_id)
+        if source:
+            db = get_db()
+            for cat in source["categories"]:
+                set_category_config_enabled(db, source_id, cat, True)
+            db.close()
+        render_cat_filter(chat_id, source_id, message_id, use_edit=True)
 
     elif data.startswith("toggle_cat:"):
-        cat = data[11:]
-        config = get_categories_config() or {c: True for c in ALL_CATEGORIES}
-        set_category_enabled(cat, not config.get(cat, True))
-        render_cat_filter(chat_id, message_id, use_edit=True)
+        # toggle_cat:source_id:category
+        parts = data.split(":", 2)
+        if len(parts) == 3:
+            source_id, cat = parts[1], parts[2]
+            config = get_categories_config(source_id) or {}
+            source = get_source(source_id)
+            if source:
+                config = {c: config.get(c, True) for c in source["categories"]}
+                set_category_enabled(source_id, cat, not config.get(cat, True))
+            render_cat_filter(chat_id, source_id, message_id, use_edit=True)
 
     elif data == "pause":
         pause_monitor()
@@ -668,8 +829,16 @@ def handle_callback(callback):
                            extra_text="⚠️ 该关键词已不存在，请刷新列表")
 
     elif data.startswith("cat:"):
-        cat = data[4:]
-        send_message(chat_id, f"📂 分类: {escape_html(cat)}")
+        # cat:source_id:category (from push buttons)
+        parts = data.split(":", 2)
+        if len(parts) == 3:
+            source_id, cat = parts[1], parts[2]
+            source = get_source(source_id)
+            sname = f"{source['emoji']} {source['name']}" if source else source_id
+            send_message(chat_id, f"📂 {escape_html(sname)} 分类: {escape_html(cat)}")
+        else:
+            cat = data[4:]
+            send_message(chat_id, f"📂 分类: {escape_html(cat)}")
 
 
 def handle_message(message):
@@ -785,7 +954,6 @@ def main():
     print(f"[INFO] Bot started: @{bot_info['username']} ({bot_info['first_name']})")
     print(f"[INFO] Chat ID: {CHAT_ID}")
 
-    # 注册命令列表，让用户输入 / 时自动弹出
     commands = [
         {"command": "start", "description": "打开主菜单"},
         {"command": "status", "description": "查看监控状态"},
@@ -801,7 +969,6 @@ def main():
     else:
         print(f"[WARN] setMyCommands failed: {cmd_result.get('description')}")
 
-    # 设置菜单按钮为命令列表，聊天界面左下角汉堡按钮点开即显示所有命令
     menu_result = tg_api("setChatMenuButton", menu_button={"type": "commands"})
     if menu_result.get("ok"):
         print(f"[INFO] Menu button set to commands")

@@ -1,16 +1,23 @@
 [Unit]
-Description=NodeSeek RSS Keyword Monitor
+Description=RSS Radar Multi-Source Monitor
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/nodeseek-radar/nodeseek_monitor.py
-WorkingDirectory=/opt/nodeseek-radar
+ExecStart=/usr/bin/python3 /root/nodeseek_monitor.py
+WorkingDirectory=/root
 Restart=always
 RestartSec=5
-TimeoutStopSec=10
+TimeoutStopSec=35
 Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=no
+ReadWritePaths=/root
+MemoryMax=128M
+TasksMax=64
 
 [Install]
 WantedBy=multi-user.target

@@ -2,17 +2,22 @@
 .nodeseek_env
 *.env
 !.env.example
-nodeseek_monitor.db
-nodeseek_monitor.db-*
+nodeseek_monitor.db*
 nodeseek_offset.txt
 nodeseek_paused
 nodeseek_categories.json
+rss_radar_v2_shadow.db
 
 # Runtime output and backups
 *.log
 backups/
 __pycache__/
 *.py[cod]
+
+# Local rollback artifacts
+nodeseek_preopt*/
+rss-radar-v1-rollback*/
+sb_migration_backup*/
 
 # Editor / OS files
 .DS_Store
