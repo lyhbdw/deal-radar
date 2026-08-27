@@ -63,7 +63,19 @@ def ensure_source_config(db):
 def source_is_enabled(db,source):
     ensure_source_config(db); row=db.execute("SELECT enabled FROM source_config WHERE source=?",(source,)).fetchone(); return True if row is None else bool(row[0])
 def set_source_enabled(db,source,enabled):
+    if source not in SOURCE_IDS: raise ValueError("unknown source")
     ensure_source_config(db); db.execute("INSERT INTO source_config(source,enabled,updated_at) VALUES(?,?,?) ON CONFLICT(source) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at",(source,int(enabled),utcnow())); db.commit()
+def get_enabled_sources(db):
+    return {source for source in SOURCE_IDS if source_is_enabled(db, source)}
+def set_enabled_sources(db, enabled_sources):
+    enabled_sources = set(enabled_sources)
+    unknown = enabled_sources - set(SOURCE_IDS)
+    if unknown: raise ValueError(f"unknown source: {sorted(unknown)}")
+    ensure_source_config(db)
+    now = utcnow()
+    for source in SOURCE_IDS:
+        db.execute("INSERT INTO source_config(source,enabled,updated_at) VALUES(?,?,?) ON CONFLICT(source) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at",(source, int(source in enabled_sources), now))
+    db.commit()
 def source_interval(db,source,default):
     ensure_source_config(db); row=db.execute("SELECT interval FROM source_config WHERE source=?",(source,)).fetchone(); return default if not row or row[0] is None else max(1.0,float(row[0]))
 def set_source_interval(db,source,interval):

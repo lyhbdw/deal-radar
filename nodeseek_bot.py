@@ -21,6 +21,7 @@ from nodeseek_core import (
     ensure_keywords_schema, ensure_state_table, get_category_config,
     set_category_enabled as set_category_config_enabled,
     state_get, validate_keywords, source_is_enabled, set_source_enabled,
+    get_enabled_sources, set_enabled_sources,
     notification_counts, claim_due_notifications, mark_notification_retry,
 )
 
@@ -632,7 +633,13 @@ def render_sources(chat_id, message_id=None, use_edit=False):
         btn = "⏸ 禁用" if enabled else "▶️ 启用"
         rows.append([{"text": f"{s['emoji']} {s['name']} {btn}", "callback_data": f"toggle_source:{sid}"}, {"text": "⚡ 刷新", "callback_data": f"refresh_source:{sid}"}])
     db.close()
-    rows += [[{"text":"🔄 刷新状态","callback_data":"sources"}], [{"text":"🔙 返回主菜单","callback_data":"main"}]]
+    rows += [
+        [{"text":"✅ 仅开 NodeSeek","callback_data":"only_source:nodeseek"}, {"text":"✅ 仅开烧饼","callback_data":"only_source:sbsb"}],
+        [{"text":"✅ 仅开 IDC","callback_data":"only_source:idcflare"}, {"text":"✅ 全部开启","callback_data":"all_sources_on"}],
+        [{"text":"⏹ 全部关闭","callback_data":"all_sources_off"}],
+        [{"text":"🔄 刷新状态","callback_data":"sources"}],
+        [{"text":"🔙 返回主菜单","callback_data":"main"}],
+    ]
     text = "\n".join(lines)
     (edit_message if use_edit else send_message)(chat_id, message_id, text, reply_markup={"inline_keyboard":rows}) if use_edit else send_message(chat_id,text,reply_markup={"inline_keyboard":rows})
 
@@ -691,6 +698,25 @@ def handle_callback(callback):
         sid = data.split(":", 1)[1]
         db = get_db()
         set_source_enabled(db, sid, not source_is_enabled(db, sid))
+        db.close()
+        render_sources(chat_id, message_id, use_edit=True)
+
+    elif data.startswith("only_source:"):
+        sid = data.split(":", 1)[1]
+        db = get_db()
+        set_enabled_sources(db, {sid})
+        db.close()
+        render_sources(chat_id, message_id, use_edit=True)
+
+    elif data == "all_sources_on":
+        db = get_db()
+        set_enabled_sources(db, {s["id"] for s in SOURCES})
+        db.close()
+        render_sources(chat_id, message_id, use_edit=True)
+
+    elif data == "all_sources_off":
+        db = get_db()
+        set_enabled_sources(db, set())
         db.close()
         render_sources(chat_id, message_id, use_edit=True)
 
