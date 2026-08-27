@@ -1,0 +1,9 @@
+.nodeseek_env
+nodeseek_monitor.db*
+nodeseek_monitor.log*
+nodeseek_offset.txt
+nodeseek_paused
+backups/
+__pycache__/
+*.pyc
+nodeseek_preopt_*/
