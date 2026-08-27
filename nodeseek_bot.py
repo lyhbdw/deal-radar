@@ -647,7 +647,7 @@ def render_digest(chat_id, message_id=None, use_edit=False):
     else: send_message(chat_id,"\n".join(lines),reply_markup=kb)
 
 def render_queue(chat_id, message_id=None, use_edit=False):
-    db=get_db(); counts=notification_counts(db); pending=claim_due_notifications(db,limit=0) if False else []
+    db=get_db(); counts=notification_counts(db)
     rows=db.execute("SELECT source,guid,attempts,last_error FROM notifications WHERE status!='sent' ORDER BY id DESC LIMIT 5").fetchall()
     lines=["📥 <b>推送队列</b>","━━━━━━━━━━━━",f"待发送：<b>{counts.get('pending',0)}</b> · 发送中：<b>{counts.get('sending',0)}</b> · 已发送：{counts.get('sent',0)}",""]
     if rows:
