@@ -7,3 +7,17 @@ backups/
 __pycache__/
 *.pyc
 nodeseek_preopt_*/
+feedsentinel_offset.txt
+nodeseek_monitor_v2.log
+.cua-driver/
+.bash_history
+.bashrc
+.cache/
+.config/
+.gitconfig
+.local/
+.npm/
+.profile
+.ssh/
+.hermes/
+Downloads/

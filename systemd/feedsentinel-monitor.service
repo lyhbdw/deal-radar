@@ -1,0 +1,23 @@
+[Unit]
+Description=FeedSentinel Multi-Source Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /root/feedsentinel_multi_monitor.py
+WorkingDirectory=/root
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=no
+ReadWritePaths=/root
+MemoryMax=96M
+TasksMax=48
+
+[Install]
+WantedBy=multi-user.target
