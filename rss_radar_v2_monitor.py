@@ -2,7 +2,7 @@
 """RSS Radar v2 monitor — fetch + message formatting only.
 Used by feedsentinel_multi_monitor.py. Legacy standalone main() removed.
 """
-import html,json,urllib.request,urllib.error
+import html,json,subprocess,urllib.request,urllib.error
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree as ET
 from rss_radar_v2_core import clamp_telegram_text
@@ -17,9 +17,15 @@ def parse(raw):
   out.append({'guid':(x.findtext('guid') or x.findtext('link') or '').strip(),'title':(x.findtext('title') or '').strip(),'link':(x.findtext('link') or '').strip(),'description':text(x.findtext('description') or ''),'pub_date':(x.findtext('pubDate') or '').strip(),'category':(x.findtext('category') or '').strip(),'author':creator.text.strip() if creator is not None and creator.text else ''})
  return [p for p in out if p['guid']]
 def fetch(source):
- """Fetch RSS via urllib — no subprocess fork overhead."""
- req=urllib.request.Request(source['rss_url'],headers={'User-Agent':'Mozilla/5.0'})
- with urllib.request.urlopen(req,timeout=10) as r:body=r.read()
+ """Fetch RSS. Prefers urllib; falls back to curl --http2 because
+ idcflare.com's Cloudflare 403s any HTTP/1.1 client fingerprint."""
+ url=source['rss_url']
+ try:
+  req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0'})
+  with urllib.request.urlopen(req,timeout=10) as r:body=r.read()
+ except urllib.error.HTTPError:
+  body=subprocess.run(['curl','-sS','--max-time','15','--compressed','-A','Mozilla/5.0',url],capture_output=True,timeout=20).stdout
+  if not body:raise RuntimeError('curl fallback returned empty body')
  posts=parse(body.decode(errors='replace'))
  if not posts:raise RuntimeError('zero parsed items')
  return posts

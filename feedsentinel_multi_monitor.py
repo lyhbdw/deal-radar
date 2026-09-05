@@ -54,7 +54,11 @@ def send(chat_id,text,markup):
  try:
   with urllib.request.urlopen(req,timeout=12) as r:res=json.loads(r.read())
   return bool(res.get('ok')),int(res.get('parameters',{}).get('retry_after',30)),res.get('description','')
- except urllib.error.HTTPError as e:return False,30,f'HTTP {e.code}'
+ except urllib.error.HTTPError as e:
+  # 429 body carries retry_after — must read it, not just the code
+  try:body=json.loads(e.read())
+  except Exception:body={}
+  return False,int(body.get('parameters',{}).get('retry_after',30)),f'HTTP {e.code}: {body.get("description",e)}'
  except Exception as e:return False,30,str(e)
 
 def deliver(db):
@@ -80,7 +84,26 @@ def deliver(db):
    db.execute("UPDATE user_notifications SET status='failed',last_error=? WHERE id=?",(error[:500],nid))
   else:
    db.execute("UPDATE user_notifications SET status='pending',next_attempt=datetime('now',?),last_error=?,claimed_at=NULL WHERE id=?",(f'+{delay} seconds',error[:500],nid))
+ db.commit()  # one commit per batch, not per row
+
+def _log_status(db,state):
+ """One status line per minute for observability."""
+ try:
+  pending=db.execute("select count(*) from user_notifications where status='pending'").fetchone()[0]
+  stuck=db.execute("select count(*) from user_notifications where status='sending' and claimed_at<datetime('now','-2 minutes')").fetchone()[0]
+  errs={sid:st['errors'] for sid,st in state.items() if st['errors']}
+  print(f'[status] pending={pending} stuck={stuck} errors={errs or "-"}',flush=True)
+ except Exception as e:print(f'[status] failed: {e}',flush=True)
+
+def _prune(db):
+ """Hourly: keep seen_posts at 30d, finished notifications at 7d, history at 90d."""
+ try:
+  a=db.execute("DELETE FROM seen_posts WHERE first_seen<datetime('now','-30 days')").rowcount
+  b=db.execute("DELETE FROM user_notifications WHERE status IN ('sent','failed') AND created_at<datetime('now','-7 days')").rowcount
+  c=db.execute("DELETE FROM user_notification_history WHERE pushed_at<datetime('now','-90 days')").rowcount
   db.commit()
+  if a or b or c:print(f'[prune] seen_posts -{a}, notifications -{b}, history -{c}',flush=True)
+ except Exception as e:print(f'[prune] failed: {e}',flush=True)
 
 def main():
  if not TOKEN:raise SystemExit('missing bot token')
@@ -104,7 +127,11 @@ def main():
     if is_source_enabled(db,sid) and st['future'] is None and now>=st['next']:
      st['future']=pool.submit(fetch,src)
    deliver(db)
-   if int(now)%60==0: db.execute("PRAGMA wal_checkpoint(PASSIVE)")
+   if int(now)%60==0:
+    db.execute("PRAGMA wal_checkpoint(PASSIVE)")
+    _log_status(db,state)
+   if int(now)%3600==0:
+    _prune(db)
    time.sleep(.3)
  db.close()
 if __name__=='__main__':main()

@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS user_notification_history(
 );
 """
 
-def now(): return datetime.now(timezone.utc).isoformat()
+def now():
+    """Must match rss_radar_v2_core.utcnow() format ('YYYY-MM-DD HH:MM:SS')."""
+    return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 _schema_done = False
 

@@ -1,5 +1,6 @@
 """RSS Radar v2 — shared schema, state, and source config for FeedSentinel."""
 from __future__ import annotations
+import re
 import sqlite3
 from datetime import datetime, timezone
 
@@ -11,8 +12,18 @@ SOURCES = [
 ]
 SOURCE_IDS = [s["id"] for s in SOURCES]
 
-def utcnow(): return datetime.now(timezone.utc).isoformat()
-def clamp_telegram_text(text): return text if len(text) <= MAX_TELEGRAM_TEXT else text[:MAX_TELEGRAM_TEXT-1] + "…"
+def utcnow():
+    """Unified SQLite-compatible UTC timestamp: 'YYYY-MM-DD HH:MM:SS'.
+
+    All pipeline timestamps MUST use this format — string comparisons
+    (next_attempt<=?, claimed_at<datetime('now','-2 minutes')) only work
+    when every side shares it. Never mix with ISO 'T' format.
+    """
+    return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+def clamp_telegram_text(text):
+    if len(text) <= MAX_TELEGRAM_TEXT: return text
+    cut = text[:MAX_TELEGRAM_TEXT-1]
+    return re.sub(r'&[a-zA-Z0-9#]{1,10}$', '', cut) + "…"  # don't split an HTML entity
 
 _init_done = False
 
