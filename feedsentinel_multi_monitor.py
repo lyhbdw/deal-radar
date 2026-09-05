@@ -101,8 +101,10 @@ def _prune(db):
   a=db.execute("DELETE FROM seen_posts WHERE first_seen<datetime('now','-30 days')").rowcount
   b=db.execute("DELETE FROM user_notifications WHERE status IN ('sent','failed') AND created_at<datetime('now','-7 days')").rowcount
   c=db.execute("DELETE FROM user_notification_history WHERE pushed_at<datetime('now','-90 days')").rowcount
+  d=db.execute("""DELETE FROM user_notifications WHERE status='pending'
+    AND user_id NOT IN (SELECT user_id FROM users WHERE active=1)""").rowcount  # dropped by inactive users
   db.commit()
-  if a or b or c:print(f'[prune] seen_posts -{a}, notifications -{b}, history -{c}',flush=True)
+  if a or b or c or d:print(f'[prune] seen_posts -{a}, notifications -{b}, history -{c}, inactive -{d}',flush=True)
  except Exception as e:print(f'[prune] failed: {e}',flush=True)
 
 def main():
@@ -127,7 +129,7 @@ def main():
     if is_source_enabled(db,sid) and st['future'] is None and now>=st['next']:
      st['future']=pool.submit(fetch,src)
    deliver(db)
-   if int(now)%60==0:
+   if int(now)%60==0 and int(now*10)%60<3:  # fire once per minute (0.3s loop)
     db.execute("PRAGMA wal_checkpoint(PASSIVE)")
     _log_status(db,state)
    if int(now)%3600==0:
