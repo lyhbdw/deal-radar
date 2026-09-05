@@ -8,6 +8,8 @@ for line in open('/root/.nodeseek_env') if os.path.exists('/root/.nodeseek_env')
  if '=' in line and not line.lstrip().startswith('#'):
   k,v=line.strip().split('=',1);os.environ.setdefault(k,v)
 TOKEN=os.getenv('NODESEEK_BOT_TOKEN','');API=f'https://api.telegram.org/bot{TOKEN}'
+OWNER=os.getenv('NODESEEK_CHAT_ID','')  # single-user mode: only this chat may use the bot
+_DENY={'inline_keyboard':[]}
 STATE_TTL=300  # 5 min timeout for add-keyword state
 
 # ── DB: persistent connection ──
@@ -73,7 +75,7 @@ _MENU={'inline_keyboard':[[{'text':'➕ 添加关键词','callback_data':'add'},
 _BACK={'inline_keyboard':[[{'text':'🔙 返回','callback_data':'main'}]]}
 
 def main_page(chat,msg=None):
- text='🛡 <b>FeedSentinel · 订阅哨兵</b>\n━━━━━━━━━━━━\n\n配置你的关键词和监控网站。每位用户的数据彼此独立。'
+ text='🛡 <b>FeedSentinel · 订阅哨兵</b>\n━━━━━━━━━━━━\n\n配置你的关键词和监控网站，命中新帖会第一时间推送给你。'
  return edit(chat,msg,text,_MENU) if msg else send(chat,text,_MENU)
 def source_page(chat,uid,msg):
  d=db();on=enabled_sources_for_user(d,uid);rows=[]
@@ -89,6 +91,9 @@ def keyword_page(chat,uid,msg,notice=''):
 def callback(c):
  uid=c['from']['id'];chat=c['message']['chat']['id'];msg=c['message']['message_id'];data=c['data']
  api_fire('answerCallbackQuery',callback_query_id=c['id'])
+ if str(uid)!=OWNER:  # single-user mode
+  api_fire('answerCallbackQuery',callback_query_id=c['id'],text='⛔ 本机器人仅限主人使用')
+  return
  d=db()
  if data=='main':main_page(chat,msg)
  elif data=='sources':source_page(chat,uid,msg)
@@ -114,7 +119,11 @@ def callback(c):
  elif data=='help' or data=='categories':edit(chat,msg,'❓ <b>帮助</b>\n\n添加关键词后，选择至少一个网站，命中新帖会只推送给你。',_BACK)  # 'categories' kept for stale buttons on old messages
  else:edit(chat,msg,'❓ <b>帮助</b>\n\n添加关键词后，选择至少一个网站，命中新帖会只推送给你。',_BACK)
 def message(m):
- uid=m['from']['id'];chat=m['chat']['id'];text=m.get('text','').strip();d=db();ensure_user(d,uid,chat,m['from'].get('username',''),m['from'].get('first_name',''))
+ uid=m['from']['id'];chat=m['chat']['id'];text=m.get('text','').strip()
+ if str(uid)!=OWNER:  # single-user mode: ignore everyone else silently
+  print(f'[auth] ignored message from {uid} ({m["from"].get("username","")})',flush=True)
+  return
+ d=db();ensure_user(d,uid,chat,m['from'].get('username',''),m['from'].get('first_name',''))
  if text.startswith('/start'):states.pop(uid,None);main_page(chat);return
  # Expire stale add-state
  if uid in _states_ts and time.time()-_states_ts[uid]>STATE_TTL:

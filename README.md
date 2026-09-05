@@ -1,8 +1,8 @@
 # FeedSentinel · 订阅哨兵
 
-轻量自托管的 Telegram 多源 RSS 关键词监控，适合 1GB VPS。
+轻量自托管的单用户 Telegram RSS 关键词监控，适合 1GB VPS。
 
-多用户公测中：每位用户独立配置关键词、监控网站、推送历史。
+单用户模式:仅 `NODESEEK_CHAT_ID` 指定的主人可用,其他人发消息/点按钮一律忽略。
 
 ## 监控源
 
@@ -16,7 +16,7 @@
 |------|------|
 | `feedsentinel_multi_bot.py` | Telegram 交互端：按钮菜单、关键词管理、网站开关、状态查看 |
 | `feedsentinel_multi_monitor.py` | RSS 监控端：多源并发拉取、关键词匹配、推送队列、Telegram 投递 |
-| `feedsentinel_multiuser.py` | 多用户数据层：用户注册、关键词 CRUD、源开关、订阅匹配 |
+| `feedsentinel_multiuser.py` | 数据层：主人关键词 CRUD、源开关、订阅匹配 |
 | `rss_radar_v2_core.py` | 共享层：数据库 schema、源注册、状态管理 |
 | `rss_radar_v2_monitor.py` | RSS 解析 + 消息格式化 |
 

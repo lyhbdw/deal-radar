@@ -29,12 +29,14 @@ def consume(db,src,posts):
  new_posts=[p for p in reversed(check_posts) if p['guid'] not in seen_ids]
  if not new_posts:
   state_set(db,f'last_rss_success:{sid}',utcnow());state_set(db,f'consecutive_errors:{sid}',0);db.commit();return
- # Batch: load all active user keywords+sources once
+ # Batch: load owner's keywords+sources once (single-user mode)
+ OWNER=os.getenv('NODESEEK_CHAT_ID','')
  all_kws=db.execute("""
    SELECT k.user_id,k.keyword FROM user_keywords k
    JOIN user_sources s ON s.user_id=k.user_id AND s.source=? AND s.enabled=1
    JOIN users u ON u.user_id=k.user_id AND u.active=1
- """,(sid,)).fetchall()
+   WHERE k.user_id=?
+  """,(sid,OWNER)).fetchall()
  now=utcnow()
  for post in new_posts:
   post['source']=sid
