@@ -20,10 +20,6 @@ CREATE TABLE IF NOT EXISTS user_sources(
   user_id INTEGER NOT NULL, source TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(user_id, source)
 );
-CREATE TABLE IF NOT EXISTS user_categories(
-  user_id INTEGER NOT NULL, source TEXT NOT NULL, category TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(user_id, source, category)
-);
 CREATE TABLE IF NOT EXISTS user_notifications(
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
   source TEXT NOT NULL, guid TEXT NOT NULL, message TEXT NOT NULL,

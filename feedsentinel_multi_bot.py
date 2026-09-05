@@ -69,7 +69,7 @@ def send(chat,text,kb=None):return api('sendMessage',chat_id=chat,text=text,pars
 def edit(chat,msg,text,kb=None):return api('editMessageText',chat_id=chat,message_id=msg,text=text,parse_mode='HTML',reply_markup=kb,disable_web_page_preview=True)
 
 # ── UI constants ──
-_MENU={'inline_keyboard':[[{'text':'➕ 添加关键词','callback_data':'add'},{'text':'📋 我的关键词','callback_data':'keywords'}],[{'text':'🗂 选择网站','callback_data':'sources'},{'text':'📂 分类过滤','callback_data':'categories'}],[{'text':'📜 我的历史','callback_data':'history'},{'text':'📊 我的状态','callback_data':'status'}],[{'text':'❓ 帮助','callback_data':'help'}]]}
+_MENU={'inline_keyboard':[[{'text':'➕ 添加关键词','callback_data':'add'},{'text':'📋 我的关键词','callback_data':'keywords'}],[{'text':'🗂 选择网站','callback_data':'sources'}],[{'text':'📜 我的历史','callback_data':'history'},{'text':'📊 我的状态','callback_data':'status'}],[{'text':'❓ 帮助','callback_data':'help'}]]}
 _BACK={'inline_keyboard':[[{'text':'🔙 返回','callback_data':'main'}]]}
 
 def main_page(chat,msg=None):
@@ -111,7 +111,7 @@ def callback(c):
   rows=d.execute('select source,guid,pushed_at from user_notification_history where user_id=? order by id desc limit 10',(uid,)).fetchall()
   text='📜 <b>我的推送历史</b>\n━━━━━━━━━━━━\n\n'+('\n'.join(f'{escape(s)} · {escape(t[:16].replace("T"," "))}' for s,g,t in rows) if rows else '暂无推送。')
   edit(chat,msg,text,_BACK)
- elif data=='categories':edit(chat,msg,'📂 分类过滤\n\n多用户分类界面正在整理中；当前可先使用网站和关键词筛选。',_BACK)
+ elif data=='help' or data=='categories':edit(chat,msg,'❓ <b>帮助</b>\n\n添加关键词后，选择至少一个网站，命中新帖会只推送给你。',_BACK)  # 'categories' kept for stale buttons on old messages
  else:edit(chat,msg,'❓ <b>帮助</b>\n\n添加关键词后，选择至少一个网站，命中新帖会只推送给你。',_BACK)
 def message(m):
  uid=m['from']['id'];chat=m['chat']['id'];text=m.get('text','').strip();d=db();ensure_user(d,uid,chat,m['from'].get('username',''),m['from'].get('first_name',''))

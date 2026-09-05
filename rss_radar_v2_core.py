@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 
 MAX_TELEGRAM_TEXT = 3900
 SOURCES = [
-    {"id":"nodeseek","name":"NodeSeek","emoji":"🛰","rss_url":"https://rss.nodeseek.com/","interval":1.0,"categories":["trade","daily","review","tech","info","dev","carpool","expose","photo-share","promotion"]},
-    {"id":"sbsb","name":"烧饼论坛","emoji":"🥞","rss_url":"https://sb.sb/rss.xml","interval":1.0,"categories":["综合","公告","优惠","主机","交易","域名","硬件","分享","推广","AI"]},
-    {"id":"idcflare","name":"IDC Flare","emoji":"🔥","rss_url":"https://idcflare.com/latest.rss","interval":1.0,"categories":["交易","求助","茶馆","福利","测评","运营"]},
+    {"id":"nodeseek","name":"NodeSeek","emoji":"🛰","rss_url":"https://rss.nodeseek.com/","interval":1.0},
+    {"id":"sbsb","name":"烧饼论坛","emoji":"🥞","rss_url":"https://sb.sb/rss.xml","interval":1.0},
+    {"id":"idcflare","name":"IDC Flare","emoji":"🔥","rss_url":"https://idcflare.com/latest.rss","interval":1.0},
 ]
 SOURCE_IDS = [s["id"] for s in SOURCES]
 
