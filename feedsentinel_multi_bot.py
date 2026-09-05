@@ -78,7 +78,7 @@ def main_page(chat,msg=None):
 def source_page(chat,uid,msg):
  d=db();on=enabled_sources_for_user(d,uid);rows=[]
  for s in SOURCES:rows.append([{'text':('✅' if s in on else '⬜')+' '+s,'callback_data':'src:'+s}])
- rows+=[[{'text':'✅ 全部开启','callback_data':'srcall'},{'text':'⏹ 全部关闭','callback_data':'srcoff'}],[_BACK['inline_keyboard'][0]]]
+ rows+=[[{'text':'✅ 全部开启','callback_data':'srcall'},{'text':'⏹ 全部关闭','callback_data':'srcoff'}],_BACK['inline_keyboard'][0]]
  edit(chat,msg,'🗂 <b>选择监控网站</b>\n━━━━━━━━━━━━\n\n点名称开关。你可以只开一个，也可以任意组合多个。',{'inline_keyboard':rows})
 def keyword_page(chat,uid,msg,notice=''):
  d=db();rows=d.execute('select id,keyword from user_keywords where user_id=? order by keyword',(uid,)).fetchall()
