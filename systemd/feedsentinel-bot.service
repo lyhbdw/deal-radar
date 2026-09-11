@@ -1,0 +1,26 @@
+[Unit]
+Description=FeedSentinel Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/feedsentinel
+Environment=PYTHONUNBUFFERED=1
+Environment=FEEDSENTINEL_ENV=/opt/feedsentinel/.env
+Environment=FEEDSENTINEL_DB=/opt/feedsentinel/feedsentinel.db
+Environment=FEEDSENTINEL_OFFSET=/opt/feedsentinel/telegram_offset.txt
+ExecStart=/usr/bin/python3 /opt/feedsentinel/feedsentinel_bot.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/feedsentinel
+MemoryMax=128M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

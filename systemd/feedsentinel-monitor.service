@@ -1,0 +1,25 @@
+[Unit]
+Description=FeedSentinel RSS Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/feedsentinel
+Environment=PYTHONUNBUFFERED=1
+Environment=FEEDSENTINEL_ENV=/opt/feedsentinel/.env
+Environment=FEEDSENTINEL_DB=/opt/feedsentinel/feedsentinel.db
+ExecStart=/usr/bin/python3 /opt/feedsentinel/feedsentinel_monitor.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/feedsentinel
+MemoryMax=96M
+TasksMax=48
+
+[Install]
+WantedBy=multi-user.target
