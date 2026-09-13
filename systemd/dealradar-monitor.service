@@ -1,0 +1,29 @@
+[Unit]
+Description=DealRadar RSS Monitor
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/deal-radar
+Environment=PYTHONUNBUFFERED=1
+Environment=DEALRADAR_ENV=/opt/deal-radar/.env
+Environment=DEALRADAR_DB=/opt/deal-radar/dealradar.db
+ExecStart=/usr/bin/python3 /opt/deal-radar/dealradar_monitor.py
+Restart=always
+RestartSec=15
+TimeoutStopSec=60
+ExecStartPre=/usr/bin/test -r /opt/deal-radar/dealradar_monitor.py
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/deal-radar
+MemoryMax=96M
+TasksMax=48
+
+[Install]
+WantedBy=multi-user.target

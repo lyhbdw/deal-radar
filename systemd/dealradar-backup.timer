@@ -1,11 +1,11 @@
 [Unit]
-Description=Daily FeedSentinel SQLite backup
+Description=Daily DealRadar SQLite backup
 
 [Timer]
 OnCalendar=*-*-* 04:30:00
 Persistent=true
 RandomizedDelaySec=15m
-Unit=feedsentinel-backup.service
+Unit=dealradar-backup.service
 
 [Install]
 WantedBy=timers.target

@@ -2,6 +2,7 @@
 .nodeseek_env
 *.env
 !.env.example
+dealradar.db*
 feedsentinel.db*
 telegram_offset.txt
 bot.lock

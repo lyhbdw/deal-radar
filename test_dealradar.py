@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import feedsentinel_monitor
+import dealradar_monitor as feedsentinel_monitor
 from singleuser import connect
 
 
@@ -50,7 +50,7 @@ def test_backup_archive_is_a_valid_sqlite_database(tmp_path):
     db.close()
     backup_script = Path(__file__).resolve().parent / "backup.py"
     subprocess.run([sys.executable, str(backup_script), str(source), str(backup_dir)], check=True)
-    archive = next(backup_dir.glob("feedsentinel-*.db.gz"))
+    archive = next(backup_dir.glob("*.db.gz"))
     restored = tmp_path / "restored.db"
     with gzip.open(archive, "rb") as inp, restored.open("wb") as out:
         out.write(inp.read())

@@ -3,10 +3,10 @@ set -euo pipefail
 BASE_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 BACKUP="${1:?usage: restore.sh BACKUP_DB}"
 [ -f "$BACKUP" ] || { echo "backup not found: $BACKUP" >&2; exit 1; }
-if systemctl is-active --quiet feedsentinel-bot.service || systemctl is-active --quiet feedsentinel-monitor.service; then
-  echo 'stop FeedSentinel services before restore' >&2; exit 1
+if systemctl is-active --quiet dealradar-bot.service || systemctl is-active --quiet dealradar-monitor.service || systemctl is-active --quiet feedsentinel-bot.service || systemctl is-active --quiet feedsentinel-monitor.service; then
+  echo 'stop DealRadar services before restore' >&2; exit 1
 fi
-python3 - "$BACKUP" "$BASE_DIR/feedsentinel.db" <<'PY'
+python3 - "$BACKUP" "$BASE_DIR/dealradar.db" <<'PY'
 import sqlite3, sys
 src=sqlite3.connect(sys.argv[1]); dst=sqlite3.connect(sys.argv[2])
 try: src.backup(dst)

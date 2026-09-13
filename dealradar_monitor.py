@@ -9,13 +9,13 @@ from rss_monitor import fetch, message
 BASE=Path(__file__).resolve().parent
 
 def load_env():
-    path=Path(os.getenv('FEEDSENTINEL_ENV',BASE/'.env'))
+    path=Path(os.getenv('DEALRADAR_ENV',os.getenv('FEEDSENTINEL_ENV',BASE/'.env')))
     if path.exists():
         for line in path.read_text().splitlines():
             if '=' in line and not line.lstrip().startswith('#'):
                 key,value=line.split('=',1); os.environ.setdefault(key.strip(),value.strip())
 load_env()
-DB_PATH=os.getenv('FEEDSENTINEL_DB',str(BASE/'feedsentinel.db'))
+DB_PATH=os.getenv('DEALRADAR_DB',os.getenv('FEEDSENTINEL_DB',str(BASE/'dealradar.db')))
 TOKEN=os.getenv('NODESEEK_BOT_TOKEN','')
 MAX_ATTEMPTS=10; MAX_DELIVERIES=20; running=True
 

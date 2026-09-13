@@ -5,12 +5,13 @@ from datetime import datetime
 from pathlib import Path
 
 base=Path(__file__).resolve().parent
-source=Path(sys.argv[1]) if len(sys.argv)>1 else base/'feedsentinel.db'
-outdir=Path(sys.argv[2]) if len(sys.argv)>2 else base/'backups'
+default_db = base / 'dealradar.db' if (base / 'dealradar.db').exists() else base / 'feedsentinel.db'
+source = Path(sys.argv[1]) if len(sys.argv) > 1 else default_db
+outdir = Path(sys.argv[2]) if len(sys.argv) > 2 else base / 'backups'
 outdir.mkdir(parents=True, exist_ok=True)
-stamp=datetime.now().strftime('%Y%m%d-%H%M%S')
-target=outdir/f'feedsentinel-{stamp}.db'
-compressed=outdir/f'feedsentinel-{stamp}.db.gz'
+stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+target = outdir / f'dealradar-{stamp}.db'
+compressed = outdir / f'dealradar-{stamp}.db.gz'
 src=sqlite3.connect(source, timeout=30); dst=sqlite3.connect(target)
 try: src.backup(dst)
 finally: dst.close(); src.close()
@@ -28,5 +29,6 @@ try:
     check.close()
 finally:
     verified.unlink(missing_ok=True)
-for old in sorted(outdir.glob('feedsentinel-*.db.gz'), key=lambda p:p.stat().st_mtime, reverse=True)[14:]: old.unlink()
+all_backups = sorted(list(outdir.glob('dealradar-*.db.gz')) + list(outdir.glob('feedsentinel-*.db.gz')), key=lambda p: p.stat().st_mtime, reverse=True)
+for old in all_backups[14:]: old.unlink()
 print(compressed)

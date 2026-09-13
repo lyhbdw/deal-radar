@@ -8,17 +8,17 @@ from rss_core import SOURCES
 BASE = Path(__file__).resolve().parent
 
 def load_env():
-    path = Path(os.getenv('FEEDSENTINEL_ENV', BASE / '.env'))
+    path = Path(os.getenv('DEALRADAR_ENV', os.getenv('FEEDSENTINEL_ENV', BASE / '.env')))
     if path.exists():
         for line in path.read_text().splitlines():
             if '=' in line and not line.lstrip().startswith('#'):
                 key, value = line.split('=', 1)
                 os.environ.setdefault(key.strip(), value.strip())
 load_env()
-DB = os.getenv('FEEDSENTINEL_DB', str(BASE / 'feedsentinel.db'))
+DB = os.getenv('DEALRADAR_DB', os.getenv('FEEDSENTINEL_DB', str(BASE / 'dealradar.db')))
 TOKEN = os.getenv('NODESEEK_BOT_TOKEN', '')
 OWNER = os.getenv('NODESEEK_CHAT_ID', '')
-OFFSET = Path(os.getenv('FEEDSENTINEL_OFFSET', str(BASE / 'telegram_offset.txt')))
+OFFSET = Path(os.getenv('DEALRADAR_OFFSET', os.getenv('FEEDSENTINEL_OFFSET', str(BASE / 'telegram_offset.txt'))))
 running = True
 states = {}
 state_ts = {}
@@ -112,8 +112,8 @@ def main_page(chat, msg=None):
     src_str = '、'.join(src_names) if src_names else '无'
 
     text = (
-        '🛡 <b>FeedSentinel</b>\n\n'
-        f'• 关键词：<b>{kw_count}</b> / 30\n'
+        '🎯 <b>DealRadar · 捡漏雷达</b>\n\n'
+        f'• 监控词：<b>{kw_count}</b> / 30\n'
         f'• 监控站点：{src_str} ({len(src_names)}/{len(SOURCES)})\n'
         f'• 累计推送：{pushed_count} 条'
     )
@@ -274,7 +274,7 @@ def callback(c):
             edit(chat, msg, '\n'.join(lines), BACK)
         elif data == 'test':
             cur_stamp = time.strftime("%H:%M:%S", time.localtime())
-            send(chat, f'✅ <b>推送测试正常</b> ({cur_stamp})', BACK)
+            send(chat, f'🎯 <b>DealRadar · 推送测试正常</b> ({cur_stamp})', BACK)
     except Exception as exc:
         print(f'[callback] {exc}', flush=True)
         api('answerCallbackQuery', _socket_timeout=5, callback_query_id=c['id'], show_alert=True, text='⚠️ 操作失败')
@@ -319,7 +319,7 @@ def message(m):
                     db.close()
                 except Exception:
                     pass
-    send(chat, '💡 发送 /start 打开控制台', MENU)
+    send(chat, '💡 发送 /start 打开 DealRadar 控制台', MENU)
 
 class ShutdownRequested(BaseException):
     pass
