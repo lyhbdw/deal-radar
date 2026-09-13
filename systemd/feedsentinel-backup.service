@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up FeedSentinel SQLite database
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/feedsentinel
+ExecStart=/opt/feedsentinel/backup.sh /opt/feedsentinel/backups

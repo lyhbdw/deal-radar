@@ -4,12 +4,21 @@ Used by feedsentinel_multi_monitor.py. Legacy standalone main() removed.
 """
 import html,subprocess,urllib.request,urllib.error
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from xml.etree import ElementTree as ET
 from rss_core import clamp_telegram_text
 
 def clean(s):return s.replace('\x1b','')
 def text(s):return ' '.join(html.unescape(s.replace('\x1b','')).split())
-def strip_html(s): return text(s)
+class _TextExtractor(HTMLParser):
+ def __init__(self):
+  super().__init__(convert_charrefs=True); self.parts=[]
+ def handle_data(self,data): self.parts.append(data)
+
+def strip_html(s):
+ parser=_TextExtractor()
+ try: parser.feed(s); parser.close(); return text(' '.join(parser.parts))
+ except Exception: return text(s)
 def parse(raw):
  root=ET.fromstring(raw);out=[]
  local=lambda tag: tag.rsplit('}',1)[-1]
@@ -24,7 +33,7 @@ def parse(raw):
   if author_node is not None:author=value(author_node,{'name'}) or author
   guid=(value(x,{'guid','id'}) or link).strip()
   out.append({'guid':guid,'title':value(x,{'title'}).strip(),'link':link,
-   'description':text(value(x,{'description','summary','content'})),
+   'description':strip_html(value(x,{'description','summary','content'})),
    'pub_date':value(x,{'pubDate','published','updated'}).strip(),
    'category':value(x,{'category'}).strip(),'author':author})
  return [p for p in out if p['guid']]
@@ -44,13 +53,27 @@ def fetch(source):
  posts=parse(body.decode(errors='replace'))
  if not posts:raise RuntimeError('zero parsed items')
  return posts
-def message(p,matched,src):
- try:when=parsedate_to_datetime(p['pub_date']).strftime('%m-%d %H:%M')
- except Exception:when=p['pub_date'][:16]
- e=lambda x:html.escape(str(x),quote=True)
- lines=[f"{src['emoji']} <b>{e(src['name'])} 命中</b>",'━━━━━━━━━━━━',f"<b>{e(p['title'][:600])}</b>"]
- if p['description']:lines.extend(['',e(p['description'][:700])])
- meta=' · '.join(x for x in (p['category'],p['author'],when) if x)
- if meta:lines.extend(['',f'<code>{e(meta)}</code>'])
- lines.extend([f"🏷 {' '.join('#'+e(x.replace(' ','_')) for x in matched)}",f'🔗 <a href="{e(p["link"])}">打开原帖</a>'])
- return clamp_telegram_text('\n'.join(lines))
+def message(p, matched, src):
+    try:
+        when = parsedate_to_datetime(p['pub_date']).strftime('%m-%d %H:%M')
+    except Exception:
+        when = p['pub_date'][:16]
+    e = lambda x: html.escape(str(x), quote=True)
+    tags = ' '.join(f"#{e(x.replace(' ', '_'))}" for x in matched)
+    lines = [
+        f"{src['emoji']} <b>{e(src['name'])}</b>",
+        f"<b>{e(p['title'][:400])}</b>"
+    ]
+    if p.get('description'):
+        desc = p['description'].strip()
+        if desc:
+            lines.extend(['', f"<i>{e(desc[:260])}</i>"])
+    meta = []
+    if tags:
+        meta.append(f"🏷 {tags}")
+    if p.get('author'):
+        meta.append(e(p['author']))
+    if when:
+        meta.append(e(when))
+    lines.extend(['', ' · '.join(meta)])
+    return clamp_telegram_text('\n'.join(lines))

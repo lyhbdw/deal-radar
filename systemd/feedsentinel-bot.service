@@ -2,6 +2,8 @@
 Description=FeedSentinel Telegram Bot
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -12,8 +14,10 @@ Environment=FEEDSENTINEL_DB=/opt/feedsentinel/feedsentinel.db
 Environment=FEEDSENTINEL_OFFSET=/opt/feedsentinel/telegram_offset.txt
 ExecStart=/usr/bin/python3 /opt/feedsentinel/feedsentinel_bot.py
 Restart=always
-RestartSec=5
-TimeoutStopSec=15
+RestartSec=15
+TimeoutStopSec=60
+ExecStartPre=/usr/bin/test -r /opt/feedsentinel/feedsentinel_bot.py
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

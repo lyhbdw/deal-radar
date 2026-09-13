@@ -47,13 +47,36 @@ def consume(db,source,posts):
     for post in reversed([p for p in posts if p['guid'] not in seen]):
         post['source']=sid; matched=matches(db,post)
         if matched:
-            markup=json.dumps({'inline_keyboard':[[{'text':'🔗 查看原帖','url':post['link']}]]},ensure_ascii=False)
+            markup=json.dumps({'inline_keyboard':[[{'text':'查看原帖','url':post['link']}]]},ensure_ascii=False)
             db.execute('INSERT OR IGNORE INTO notifications(source,guid,message,markup,next_attempt,created_at) VALUES(?,?,?,?,?,?)',(sid,post['guid'],message(post,matched,source),markup,timestamp,timestamp))
         db.execute('INSERT OR IGNORE INTO seen_posts(source,guid,title,link,author,category,pub_date,matched_keywords,first_seen) VALUES(?,?,?,?,?,?,?,?,?)',(sid,post['guid'],post['title'],post['link'],post['author'],post['category'],post['pub_date'],','.join(matched),timestamp))
     db.execute('INSERT OR REPLACE INTO app_config(key,value) VALUES(?,?)',(f'last_success:{sid}',timestamp)); db.execute('DELETE FROM app_config WHERE key=?',(f'last_error:{sid}',)); db.commit()
 
+def set_metric(db, source_id, name, value):
+    db.execute('INSERT OR REPLACE INTO app_config(key,value) VALUES(?,?)',
+               (f'metric:{source_id}:{name}', str(value)))
+
+def record_success(db, source_id, duration, item_count):
+    set_metric(db, source_id, 'last_fetch_duration_seconds', f'{duration:.3f}')
+    set_metric(db, source_id, 'last_item_count', item_count)
+    set_metric(db, source_id, 'last_success_at', now())
+    set_metric(db, source_id, 'consecutive_failures', 0)
+    db.execute('DELETE FROM app_config WHERE key=?', (f'metric:{source_id}:last_error',))
+    db.commit()
+
+def record_failure(db, source_id, duration, error):
+    row=db.execute('SELECT value FROM app_config WHERE key=?',
+                   (f'metric:{source_id}:consecutive_failures',)).fetchone()
+    failures=int(row[0]) + 1 if row else 1
+    set_metric(db, source_id, 'last_fetch_duration_seconds', f'{duration:.3f}')
+    set_metric(db, source_id, 'last_failure_at', now())
+    set_metric(db, source_id, 'consecutive_failures', failures)
+    set_metric(db, source_id, 'last_error', error[:300])
+    db.commit()
+
 def deliver(db):
     db.execute("UPDATE notifications SET status='pending',claimed_at=NULL WHERE status='sending' AND claimed_at<datetime('now','-2 minutes')")
+    db.commit()
     rows=db.execute("SELECT id,message,markup,attempts FROM notifications WHERE status='pending' AND next_attempt<=? ORDER BY id LIMIT ?",(now(),MAX_DELIVERIES)).fetchall()
     if not rows:return
     ids=[r[0] for r in rows]; placeholders=','.join('?'*len(ids)); claimed=now(); db.execute(f"UPDATE notifications SET status='sending',attempts=attempts+1,claimed_at=? WHERE status='pending' AND id IN ({placeholders})",[claimed]+ids); db.commit()
@@ -62,38 +85,53 @@ def deliver(db):
         ok,delay,error=send(chat,text,markup); timestamp=now()
         if ok:
             source,guid=db.execute('SELECT source,guid FROM notifications WHERE id=?',(nid,)).fetchone()
-            title=db.execute('SELECT title FROM seen_posts WHERE source=? AND guid=?',(source,guid)).fetchone()[0]
+            row=db.execute('SELECT title,matched_keywords FROM seen_posts WHERE source=? AND guid=?',(source,guid)).fetchone()
+            title=row[0] if row and row[0] is not None else ''
+            keywords=row[1] if row and row[1] is not None else ''
             db.execute("UPDATE notifications SET status='sent',sent_at=?,last_error=NULL WHERE id=?",(timestamp,nid))
-            db.execute('INSERT OR IGNORE INTO notification_history(source,guid,title,matched_keywords,pushed_at) VALUES(?,?,?,?,?)',(source,guid,title,'',timestamp))
+            db.execute('INSERT OR IGNORE INTO notification_history(source,guid,title,matched_keywords,pushed_at) VALUES(?,?,?,?,?)',(source,guid,title,keywords,timestamp))
         elif attempts+1>=MAX_ATTEMPTS: db.execute('UPDATE notifications SET status="failed",last_error=? WHERE id=?',(error[:500],nid))
         else: db.execute("UPDATE notifications SET status='pending',next_attempt=datetime('now',?),last_error=?,claimed_at=NULL WHERE id=?",(f'+{delay} seconds',error[:500],nid))
-    db.commit()
+        db.commit()
 
 def main():
     global running
     if not TOKEN or not os.getenv('NODESEEK_CHAT_ID'): raise SystemExit('missing NODESEEK_BOT_TOKEN or NODESEEK_CHAT_ID')
     lock=lock_instance(); db=connect(DB_PATH)
     signal.signal(signal.SIGTERM,lambda *_: globals().__setitem__('running',False)); signal.signal(signal.SIGINT,lambda *_: globals().__setitem__('running',False))
-    state={s['id']:{'next':0,'future':None,'errors':0} for s in SOURCES}; last_maintenance=time.monotonic()
+    state={s['id']:{'next':0,'future':None,'errors':0,'started':0} for s in SOURCES}; last_maintenance=time.monotonic()
     with ThreadPoolExecutor(max_workers=len(SOURCES)) as pool:
         while running:
             monotonic=time.monotonic()
             for source in SOURCES:
                 item=state[source['id']]
                 if item['future'] and item['future'].done():
-                    try: consume(db,source,item['future'].result()); item['errors']=0; item['next']=monotonic+source_interval(db,source['id'],source['interval'])
-                    except Exception as exc: item['errors']+=1; item['next']=monotonic+min(300,max(3,2**item['errors'])); db.execute('INSERT OR REPLACE INTO app_config(key,value) VALUES(?,?)',(f'last_error:{source["id"]}',str(exc)[:300])); db.commit(); print(f'[rss] {source["id"]}: {exc}',flush=True)
+                    duration=time.monotonic()-item['started']
+                    try:
+                        posts=item['future'].result(); consume(db,source,posts); item['errors']=0; item['next']=monotonic+source_interval(db,source['id'],source['interval']); record_success(db,source['id'],duration,len(posts))
+                    except Exception as exc:
+                        item['errors']+=1; item['next']=monotonic+min(300,max(3,2**item['errors'])); db.execute('INSERT OR REPLACE INTO app_config(key,value) VALUES(?,?)',(f'last_error:{source["id"]}',str(exc)[:300])); record_failure(db,source['id'],duration,str(exc)); print(f'[rss] {source["id"]}: {exc}',flush=True)
                     item['future']=None
-                if source_enabled(db,source['id']) and item['future'] is None and monotonic>=item['next']: item['future']=pool.submit(fetch,source)
+                if source_enabled(db,source['id']) and item['future'] is None and monotonic>=item['next']:
+                    item['started']=monotonic; item['future']=pool.submit(fetch,source)
             deliver(db)
             if monotonic-last_maintenance >= 3600:
-                try:
-                    db.execute("DELETE FROM seen_posts WHERE first_seen < datetime('now','-90 days')")
-                    db.execute("DELETE FROM notification_history WHERE pushed_at < datetime('now','-365 days')")
-                    db.execute("DELETE FROM notifications WHERE status IN ('sent','failed') AND created_at < datetime('now','-30 days')")
-                    db.execute('PRAGMA wal_checkpoint(PASSIVE)'); db.commit()
-                except sqlite3.OperationalError as exc:
-                    print(f'[maintenance] skipped: {exc}',flush=True)
+                for attempt in range(4):
+                    try:
+                        db.execute("DELETE FROM seen_posts WHERE first_seen < datetime('now','-90 days')")
+                        db.commit()
+                        db.execute("DELETE FROM notification_history WHERE pushed_at < datetime('now','-365 days')")
+                        db.commit()
+                        db.execute("DELETE FROM notifications WHERE status IN ('sent','failed') AND created_at < datetime('now','-30 days')")
+                        db.commit()
+                        db.execute('PRAGMA wal_checkpoint(PASSIVE)')
+                        break
+                    except sqlite3.OperationalError as exc:
+                        db.rollback()
+                        if 'locked' not in str(exc).lower() or attempt == 3:
+                            print(f'[maintenance] failed: {exc}',flush=True)
+                            break
+                        time.sleep(2 ** attempt)
                 last_maintenance=monotonic
             time.sleep(.3)
     db.close(); _=lock

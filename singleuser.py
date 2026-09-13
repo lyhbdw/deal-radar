@@ -42,11 +42,17 @@ def now():
     return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 def connect(path):
-    db = sqlite3.connect(path, timeout=15)
-    db.execute('PRAGMA busy_timeout=15000')
-    db.execute('PRAGMA journal_mode=WAL')
-    db.executescript(SCHEMA)
-    db.commit()
+    db = sqlite3.connect(path, timeout=5)
+    db.execute('PRAGMA busy_timeout=5000')
+    db.execute('PRAGMA synchronous=NORMAL')
+    db.execute('PRAGMA foreign_keys=ON')
+    mode = db.execute('PRAGMA journal_mode').fetchone()[0].lower()
+    if mode != 'wal':
+        db.execute('PRAGMA journal_mode=WAL')
+    row = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='keywords'").fetchone()
+    if not row:
+        db.executescript(SCHEMA)
+        db.commit()
     return db
 
 def enabled_sources(db):

@@ -19,6 +19,8 @@ rss_radar_v2_shadow.db
 backups/
 __pycache__/
 *.py[cod]
+.venv/
+.pytest_cache/
 
 # Local rollback artifacts
 nodeseek_preopt*/

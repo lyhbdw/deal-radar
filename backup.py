@@ -11,7 +11,7 @@ outdir.mkdir(parents=True, exist_ok=True)
 stamp=datetime.now().strftime('%Y%m%d-%H%M%S')
 target=outdir/f'feedsentinel-{stamp}.db'
 compressed=outdir/f'feedsentinel-{stamp}.db.gz'
-src=sqlite3.connect(source); dst=sqlite3.connect(target)
+src=sqlite3.connect(source, timeout=30); dst=sqlite3.connect(target)
 try: src.backup(dst)
 finally: dst.close(); src.close()
 check=sqlite3.connect(target)
@@ -19,5 +19,14 @@ assert check.execute('pragma integrity_check').fetchone()[0] == 'ok'
 check.close()
 with target.open('rb') as inp, gzip.open(compressed,'wb',compresslevel=6) as out: shutil.copyfileobj(inp,out)
 target.unlink()
+with gzip.open(compressed, 'rb') as inp, open(outdir / f'.verify-{stamp}.db', 'wb') as out:
+    shutil.copyfileobj(inp, out)
+verified = outdir / f'.verify-{stamp}.db'
+try:
+    check=sqlite3.connect(verified)
+    assert check.execute('pragma integrity_check').fetchone()[0] == 'ok'
+    check.close()
+finally:
+    verified.unlink(missing_ok=True)
 for old in sorted(outdir.glob('feedsentinel-*.db.gz'), key=lambda p:p.stat().st_mtime, reverse=True)[14:]: old.unlink()
 print(compressed)
