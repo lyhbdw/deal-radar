@@ -118,13 +118,13 @@ def main():
             if monotonic-last_maintenance >= 3600:
                 for attempt in range(4):
                     try:
-                        db.execute("DELETE FROM seen_posts WHERE first_seen < datetime('now','-90 days')")
+                        db.execute("DELETE FROM seen_posts WHERE first_seen < datetime('now','-30 days')")
                         db.commit()
-                        db.execute("DELETE FROM notification_history WHERE pushed_at < datetime('now','-365 days')")
+                        db.execute("DELETE FROM notification_history WHERE pushed_at < datetime('now','-180 days')")
                         db.commit()
                         db.execute("DELETE FROM notifications WHERE status IN ('sent','failed') AND created_at < datetime('now','-30 days')")
                         db.commit()
-                        db.execute('PRAGMA wal_checkpoint(PASSIVE)')
+                        db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
                         break
                     except sqlite3.OperationalError as exc:
                         db.rollback()

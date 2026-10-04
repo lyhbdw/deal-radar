@@ -1,6 +1,0 @@
-[Unit]
-Description=Back up FeedSentinel SQLite state
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/python3 /root/nodeseek_backup.py

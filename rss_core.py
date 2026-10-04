@@ -1,57 +1,19 @@
-"""RSS Radar v2 — shared schema, state, and source config for FeedSentinel."""
+"""DealRadar — 共享数据结构、源配置与辅助工具。"""
 from __future__ import annotations
 import re
-import sqlite3
-from datetime import datetime, timezone
 
 MAX_TELEGRAM_TEXT = 3900
+
 SOURCES = [
-    {"id":"nodeseek","name":"NodeSeek","emoji":"🛰","rss_url":"https://rss.nodeseek.com/","interval":1.0},
-    {"id":"sbsb","name":"烧饼论坛","emoji":"🥞","rss_url":"https://sb.sb/rss.xml","interval":1.0},
-    {"id":"idcflare","name":"IDC Flare","emoji":"🔥","rss_url":"https://idcflare.com/latest.rss","interval":1.0},
+    {"id": "nodeseek", "name": "NodeSeek", "emoji": "🛰", "rss_url": "https://rss.nodeseek.com/", "interval": 1.0},
+    {"id": "sbsb", "name": "烧饼论坛", "emoji": "🥞", "rss_url": "https://sb.sb/rss.xml", "interval": 1.0},
+    {"id": "idcflare", "name": "IDC Flare", "emoji": "🔥", "rss_url": "https://idcflare.com/latest.rss", "interval": 1.0},
 ]
 SOURCE_IDS = [s["id"] for s in SOURCES]
 
-def utcnow():
-    """Unified SQLite-compatible UTC timestamp: 'YYYY-MM-DD HH:MM:SS'.
-
-    All pipeline timestamps MUST use this format — string comparisons
-    (next_attempt<=?, claimed_at<datetime('now','-2 minutes')) only work
-    when every side shares it. Never mix with ISO 'T' format.
-    """
-    return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-def clamp_telegram_text(text):
-    if len(text) <= MAX_TELEGRAM_TEXT: return text
-    cut = text[:MAX_TELEGRAM_TEXT-1]
-    return re.sub(r'&[a-zA-Z0-9#]{1,10}$', '', cut) + "…"  # don't split an HTML entity
-
-_init_done = False
-
-def connect(path):
-    global _init_done
-    db=sqlite3.connect(path,timeout=15)
-    db.execute("PRAGMA busy_timeout=15000")
-    if not _init_done:
-        db.execute("PRAGMA journal_mode=WAL")
-        initialize(db)
-    return db
-
-def initialize(db):
-    global _init_done
-    if _init_done: return
-    db.executescript("""
-    CREATE TABLE IF NOT EXISTS monitor_state(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS source_config(source TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 1,interval REAL,updated_at TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS seen_posts(source TEXT NOT NULL,guid TEXT NOT NULL,title TEXT,link TEXT,author TEXT,category TEXT,pub_date TEXT,matched_keywords TEXT,first_seen TEXT NOT NULL,PRIMARY KEY(source,guid));
-    CREATE INDEX IF NOT EXISTS idx_seen_first_seen ON seen_posts(first_seen);
-    """)
-    db.commit()
-    _init_done = True
-
-def state_get(db,key,default=None):
-    row=db.execute("SELECT value FROM monitor_state WHERE key=?",(key,)).fetchone();return default if row is None else row[0]
-def state_set(db,key,value): db.execute("INSERT OR REPLACE INTO monitor_state(key,value) VALUES(?,?)",(key,str(value)))
-def is_source_enabled(db,sid):
-    row=db.execute("SELECT enabled FROM source_config WHERE source=?",(sid,)).fetchone();return True if row is None else bool(row[0])
-def interval_for(db,sid,default):
-    row=db.execute("SELECT interval FROM source_config WHERE source=?",(sid,)).fetchone();return default if row is None or row[0] is None else max(1.0,float(row[0]))
+def clamp_telegram_text(text: str) -> str:
+    """截断超长 Telegram 消息文本，避免破坏 HTML 实体。"""
+    if len(text) <= MAX_TELEGRAM_TEXT:
+        return text
+    cut = text[:MAX_TELEGRAM_TEXT - 1]
+    return re.sub(r'&[a-zA-Z0-9#]{1,10}$', '', cut) + "…"

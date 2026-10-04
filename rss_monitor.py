@@ -44,13 +44,25 @@ def fetch(source):
  try:
   req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0'})
   with urllib.request.urlopen(req,timeout=10) as r:body=r.read()
- except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError):
-  result=subprocess.run(['curl','-fsS','--max-time','15','--compressed','-A','FeedSentinel/1.0',url],capture_output=True,timeout=20)
+ except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError) as exc:
+  primary=f'{type(exc).__name__}: {exc}'
+  if isinstance(exc, urllib.error.HTTPError) and exc.code in (502, 503, 504, 404):
+   raise RuntimeError(f'urllib failed ({primary})')
+  try:
+   result=subprocess.run(['curl','-fsS','--max-time','15','--compressed','-A','FeedSentinel/1.0',url],capture_output=True,timeout=20)
+  except subprocess.TimeoutExpired:
+   raise RuntimeError(f'urllib failed ({primary}); curl fallback timed out after 20s')
   if result.returncode != 0 or not result.stdout:
    detail=result.stderr.decode(errors='replace').strip()[:300]
-   raise RuntimeError(f'curl fallback failed ({result.returncode}): {detail}')
+   raise RuntimeError(f'urllib failed ({primary}); curl fallback failed ({result.returncode}): {detail}')
   body=result.stdout
- posts=parse(body.decode(errors='replace'))
+ try:
+  posts=parse(body.decode(errors='replace'))
+ except ET.ParseError as exc:
+  # Empty or non-XML body (Cloudflare challenge page, truncated response,
+  # HTML error page). Include the body head so the cause is visible in /status.
+  head=body[:200].decode(errors='replace').strip()
+  raise RuntimeError(f'XML parse error: {exc}; body head: {head!r}')
  if not posts:raise RuntimeError('zero parsed items')
  return posts
 def message(p, matched, src):

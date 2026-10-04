@@ -73,7 +73,11 @@ def api(method, _socket_timeout=None, **payload):
             http_connections.discard(conn)
         http_local.conn = None
         http_local.sock_timeout = None
-        print(f'[api] {method}: {exc}', flush=True)
+        is_normal_poll_timeout = method == 'getUpdates' and (
+            'timed out' in str(exc).lower() or isinstance(exc, (TimeoutError, http.client.RemoteDisconnected))
+        )
+        if not is_normal_poll_timeout:
+            print(f'[api] {method}: {exc}', flush=True)
         return {'ok': False, 'description': str(exc)}
 
 def send(chat, text, markup=None):

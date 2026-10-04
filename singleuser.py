@@ -1,8 +1,9 @@
 """Single-user FeedSentinel storage layer."""
 import sqlite3
 from datetime import datetime, timezone
+from rss_core import SOURCE_IDS
 
-SOURCES = ("nodeseek", "sbsb", "idcflare")
+SOURCES = tuple(SOURCE_IDS)
 MAX_KEYWORDS = 30
 
 SCHEMA = """

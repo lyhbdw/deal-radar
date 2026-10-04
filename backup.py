@@ -31,4 +31,9 @@ finally:
     verified.unlink(missing_ok=True)
 all_backups = sorted(list(outdir.glob('dealradar-*.db.gz')) + list(outdir.glob('feedsentinel-*.db.gz')), key=lambda p: p.stat().st_mtime, reverse=True)
 for old in all_backups[14:]: old.unlink()
+try:
+    with sqlite3.connect(source, timeout=10) as conn:
+        conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+except Exception:
+    pass
 print(compressed)
